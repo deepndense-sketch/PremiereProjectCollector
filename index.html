@@ -1,0 +1,372 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Project Collector</title>
+<style>
+:root {
+    color-scheme: dark;
+    --bg: #1e1e1e;
+    --panel: #252526;
+    --panel-2: #2d2d30;
+    --line: #3a3a3d;
+    --text: #f3f3f3;
+    --muted: #b7b7bc;
+    --accent: #1f8bff;
+    --accent-2: #42a5ff;
+    --danger: #ff6b6b;
+    --shadow: rgba(0, 0, 0, 0.35);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+    background: radial-gradient(circle at top, #303038 0%, var(--bg) 45%, #181818 100%);
+    color: var(--text);
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+body {
+    padding: 24px;
+}
+
+.app {
+    max-width: 980px;
+    margin: 0 auto;
+    display: grid;
+    gap: 18px;
+}
+
+.hero,
+.card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 18px 40px var(--shadow);
+}
+
+.hero {
+    padding: 24px;
+}
+
+.eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin-bottom: 10px;
+}
+
+h1 {
+    margin: 0 0 10px;
+    font-size: 34px;
+    font-weight: 700;
+}
+
+.hero p,
+.meta,
+.label {
+    color: var(--muted);
+}
+
+.actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+}
+
+button {
+    border: 0;
+    border-radius: 12px;
+    padding: 14px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+
+button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.button-secondary {
+    background: #3a3a3d;
+    color: var(--text);
+}
+
+.button-primary {
+    background: linear-gradient(135deg, var(--accent), #1270d7);
+    color: white;
+    box-shadow: 0 10px 24px rgba(31, 139, 255, 0.25);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 18px;
+}
+
+.full-width {
+    grid-column: 1 / -1;
+}
+
+.card {
+    padding: 20px;
+}
+
+.card-title {
+    margin: 0 0 14px;
+    font-size: 18px;
+}
+
+.path-box,
+.status-box,
+.list-box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+}
+
+.path-box {
+    word-break: break-word;
+    min-height: 64px;
+}
+
+.progress-track {
+    width: 100%;
+    height: 12px;
+    background: #171718;
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid #2c2c2f;
+    margin: 12px 0;
+}
+
+.progress-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), #67b8ff);
+}
+
+.status-line {
+    margin-top: 10px;
+    color: var(--muted);
+    word-break: break-word;
+}
+
+.list-box {
+    max-height: 280px;
+    overflow: auto;
+}
+
+.tree-toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.button-small {
+    padding: 10px 14px;
+    font-size: 13px;
+    border-radius: 10px;
+}
+
+.selection-note {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.tree-box {
+    max-height: 420px;
+}
+
+.tree-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.tree-node {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+.tree-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+}
+
+.tree-children {
+    list-style: none;
+    padding: 8px 0 0 18px;
+    margin: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.tree-label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.tree-name {
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.tree-meta {
+    color: var(--muted);
+    font-size: 12px;
+    word-break: break-word;
+}
+
+.tree-toggle {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.tree-toggle.is-hidden {
+    visibility: hidden;
+}
+
+.tree-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+
+.result-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 10px;
+}
+
+.list-item,
+.list-empty {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.list-empty {
+    color: var(--muted);
+}
+
+.warning-title {
+    color: #ffd28c;
+}
+
+.error-title {
+    color: #ff9f9f;
+}
+
+@media (max-width: 900px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+
+    body {
+        padding: 16px;
+    }
+}
+</style>
+<script src="js/CSInterface.js"></script>
+<script src="js/main.js"></script>
+</head>
+<body>
+<div class="app">
+    <section class="hero">
+        <div class="eyebrow">Premiere Pro Extension</div>
+        <h1>Project Collector</h1>
+        <p>Build a clean delivery folder from the current Premiere project, preserve the project bin structure, and review any copy failures in one place.</p>
+        <div class="actions">
+            <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
+            <button id="collectButton" class="button-primary" onclick="collect()">Copy Project Media</button>
+        </div>
+    </section>
+
+    <section class="grid">
+        <div class="card full-width">
+            <h2 class="card-title">Source File List</h2>
+            <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. If nothing is selected here, the copy still includes all files by default.</p>
+            <div class="tree-toolbar">
+                <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Hide List</button>
+                <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
+                <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
+                <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
+            </div>
+            <div class="path-box" id="selectionSummary">Loading project files from Premiere...</div>
+            <div class="list-box tree-box" id="sourceListBox" style="margin-top: 14px;">
+                <ul class="tree-list" id="sourceTree"></ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Destination</h2>
+            <div class="path-box" id="path">No folder selected yet</div>
+
+            <h2 class="card-title" style="margin-top: 18px;">Progress</h2>
+            <div class="status-box">
+                <div class="label">Current File</div>
+                <div class="status-line" id="currentFile">Waiting to start</div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="meta" id="progressText">0 / 0 files copied</div>
+                <div class="status-line" id="summaryText">Select a destination folder to build the project package.</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title error-title">Files Not Copied</h2>
+            <div class="list-box">
+                <ul class="result-list" id="errorList"></ul>
+            </div>
+
+            <h2 class="card-title warning-title" style="margin-top: 18px;">Skipped Items</h2>
+            <div class="list-box">
+                <ul class="result-list" id="missingList"></ul>
+            </div>
+        </div>
+    </section>
+</div>
+</body>
+</html>

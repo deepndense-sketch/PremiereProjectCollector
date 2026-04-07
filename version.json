@@ -1,5 +1,5 @@
 {
-  "version": "1.3.1",
+  "version": "1.3.2",
   "channel": "main",
-  "notes": "Release 1.3.1 adds a simple install batch file that replaces the installed CEP folder on C:."
+  "notes": "Release 1.3.2 keeps the inline version button solid and normal-looking when no update is available."
 }

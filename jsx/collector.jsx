@@ -304,6 +304,28 @@ function getProjectCopyPlan(destination) {
     }
 }
 
+function getActiveSequenceTrackUsage() {
+    try {
+        var activeSequenceName = '';
+        var videoTrackUsage = [];
+        var audioTrackUsage = [];
+
+        if (app && app.project && app.project.activeSequence) {
+            activeSequenceName = app.project.activeSequence.name || '';
+            videoTrackUsage = pcTrackCollectionUsage(app.project.activeSequence.videoTracks, 'V');
+            audioTrackUsage = pcTrackCollectionUsage(app.project.activeSequence.audioTracks, 'A');
+        }
+
+        return '{' +
+            '"sequenceName":"' + pcJsonEscape(activeSequenceName) + '",' +
+            '"videoTrackUsage":' + pcTrackUsageJson(videoTrackUsage) + ',' +
+            '"audioTrackUsage":' + pcTrackUsageJson(audioTrackUsage) +
+            '}';
+    } catch (e) {
+        return pcJsonError(e.toString());
+    }
+}
+
 function prepareProjectStructure(destination) {
     try {
         var plan = pcBuildPlan(destination);

@@ -1,5 +1,5 @@
 {
-  "version": "1.3.2",
+  "version": "1.4.0",
   "channel": "main",
-  "notes": "Release 1.3.2 keeps the inline version button solid and normal-looking when no update is available."
+  "notes": "Release 1.4.0 adds multi-sequence track ignore filters and starts the source list hidden by default."
 }

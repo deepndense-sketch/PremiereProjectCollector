@@ -211,9 +211,57 @@ button:disabled {
     line-height: 1.5;
 }
 
+.small-note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .filter-grid {
     display: grid;
     gap: 16px;
+}
+
+.sequence-filter-stack {
+    display: grid;
+    gap: 14px;
+}
+
+.sequence-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    display: grid;
+    gap: 12px;
+}
+
+.sequence-header {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sequence-title {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.sequence-subtitle {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.sequence-groups {
+    display: grid;
+    gap: 14px;
+}
+
+.sequence-group {
+    display: grid;
+    gap: 10px;
 }
 
 .filter-row {
@@ -407,7 +455,7 @@ button:disabled {
             <h2 class="card-title">Source File List</h2>
             <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. If nothing is selected here, the copy still includes all files by default.</p>
             <div class="tree-toolbar">
-                <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Hide List</button>
+                <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
                 <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
                 <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
                 <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
@@ -420,25 +468,12 @@ button:disabled {
 
         <div class="card full-width">
             <h2 class="card-title">Ignore Media On Tracks</h2>
-            <p class="selection-note">Skip copying source media used on selected active-sequence tracks. Add as many video or audio tracks as you want to ignore.</p>
-            <div class="filter-grid">
-                <div>
-                    <div class="filter-row">
-                        <div class="label">Video tracks</div>
-                        <select id="ignoreVideoTrackSelect"></select>
-                        <button class="button-secondary button-small" onclick="addIgnoredTrack('video')">Ignore Track</button>
-                    </div>
-                    <div class="chip-list" id="ignoredVideoTracks" style="margin-top: 10px;"></div>
-                </div>
-                <div>
-                    <div class="filter-row">
-                        <div class="label">Audio tracks</div>
-                        <select id="ignoreAudioTrackSelect"></select>
-                        <button class="button-secondary button-small" onclick="addIgnoredTrack('audio')">Ignore Track</button>
-                    </div>
-                    <div class="chip-list" id="ignoredAudioTracks" style="margin-top: 10px;"></div>
-                </div>
+            <p class="selection-note">Skip copying source media used on selected tracks from one or more chosen sequences. The current active sequence is added by default, and you can switch sequences in Premiere and add more.</p>
+            <div class="tree-toolbar">
+                <button class="button-secondary button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
             </div>
+            <div class="sequence-filter-stack" id="sequenceFilters"></div>
+            <div class="small-note" id="sequenceFilterHint">Switch to another sequence in Premiere, then click Add Current Active Sequence to include its track filters here too.</div>
         </div>
 
         <div class="card">

@@ -11,15 +11,13 @@ let isCopying = false;
 let hostScriptReady = false;
 let latestPlan = null;
 let sourceTree = null;
-let listVisible = true;
+let listVisible = false;
 let selectionTouched = false;
 let localVersion = 'unknown';
 let remoteVersion = null;
-let ignoredVideoTracks = [];
-let ignoredAudioTracks = [];
+let selectedSequenceFilters = [];
 
-const IGNORED_VIDEO_TRACKS_STORAGE_KEY = 'projectcollector.ignoredVideoTracks';
-const IGNORED_AUDIO_TRACKS_STORAGE_KEY = 'projectcollector.ignoredAudioTracks';
+const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
 
 function setText(id, value) {
     document.getElementById(id).textContent = value;
@@ -502,17 +500,23 @@ function updateSelectionSummary() {
 
     const total = latestPlan.tasks.length;
     const included = getSelectedTasks().length;
-    const ignoredTrackSummary = [];
+    const ignoredTrackSummary = selectedSequenceFilters
+        .map((filter) => {
+            const parts = [];
 
-    if (ignoredVideoTracks.length) {
-        ignoredTrackSummary.push(`ignored video: ${ignoredVideoTracks.map((trackNumber) => `V${trackNumber}`).join(', ')}`);
-    }
+            if (filter.ignoredVideoTracks.length) {
+                parts.push(`video ${filter.ignoredVideoTracks.map((trackNumber) => `V${trackNumber}`).join(', ')}`);
+            }
 
-    if (ignoredAudioTracks.length) {
-        ignoredTrackSummary.push(`ignored audio: ${ignoredAudioTracks.map((trackNumber) => `A${trackNumber}`).join(', ')}`);
-    }
+            if (filter.ignoredAudioTracks.length) {
+                parts.push(`audio ${filter.ignoredAudioTracks.map((trackNumber) => `A${trackNumber}`).join(', ')}`);
+            }
 
-    const suffix = ignoredTrackSummary.length ? ` (${ignoredTrackSummary.join(' | ')})` : '';
+            return parts.length ? `${filter.sequenceName}: ${parts.join(' | ')}` : '';
+        })
+        .filter(Boolean);
+
+    const suffix = ignoredTrackSummary.length ? ` (${ignoredTrackSummary.join(' || ')})` : '';
 
     if (!selectionTouched) {
         setText('selectionSummary', `All ${total} files will be included by default. Once you change the list, only the checked items will be copied.${suffix}`);
@@ -560,45 +564,123 @@ function normalizeMediaKey(filePath) {
     return tryResolveWindowsPath(filePath).toLowerCase();
 }
 
-function loadIgnoredTrackState() {
-    try {
-        const savedVideo = JSON.parse(localStorage.getItem(IGNORED_VIDEO_TRACKS_STORAGE_KEY) || '[]');
-        ignoredVideoTracks = Array.isArray(savedVideo) ? savedVideo : [];
-    } catch (error) {
-        ignoredVideoTracks = [];
-    }
-
-    try {
-        const savedAudio = JSON.parse(localStorage.getItem(IGNORED_AUDIO_TRACKS_STORAGE_KEY) || '[]');
-        ignoredAudioTracks = Array.isArray(savedAudio) ? savedAudio : [];
-    } catch (error) {
-        ignoredAudioTracks = [];
-    }
+function sanitizeTrackUsageEntries(entries, prefix) {
+    return Array.isArray(entries)
+        ? entries.map((entry) => ({
+            trackNumber: parseInt(entry.trackNumber, 10) || 0,
+            label: entry.label || `${prefix}${entry.trackNumber}`,
+            clipCount: parseInt(entry.clipCount, 10) || 0,
+            mediaPaths: Array.isArray(entry.mediaPaths) ? entry.mediaPaths.slice() : []
+        })).filter((entry) => entry.trackNumber > 0)
+        : [];
 }
 
-function saveIgnoredTrackState() {
+function createSequenceFilter(sequenceName, videoTrackUsage, audioTrackUsage, locked) {
+    return {
+        sequenceName: sequenceName || 'Unknown Sequence',
+        videoTrackUsage: sanitizeTrackUsageEntries(videoTrackUsage, 'V'),
+        audioTrackUsage: sanitizeTrackUsageEntries(audioTrackUsage, 'A'),
+        ignoredVideoTracks: [],
+        ignoredAudioTracks: [],
+        locked: !!locked
+    };
+}
+
+function sanitizeSequenceFilter(rawFilter, locked) {
+    const filter = createSequenceFilter(rawFilter.sequenceName, rawFilter.videoTrackUsage, rawFilter.audioTrackUsage, locked);
+
+    filter.ignoredVideoTracks = Array.isArray(rawFilter.ignoredVideoTracks)
+        ? rawFilter.ignoredVideoTracks.map((value) => parseInt(value, 10) || 0).filter((value) => value > 0)
+        : [];
+    filter.ignoredAudioTracks = Array.isArray(rawFilter.ignoredAudioTracks)
+        ? rawFilter.ignoredAudioTracks.map((value) => parseInt(value, 10) || 0).filter((value) => value > 0)
+        : [];
+
+    filter.ignoredVideoTracks = Array.from(new Set(filter.ignoredVideoTracks)).sort((a, b) => a - b);
+    filter.ignoredAudioTracks = Array.from(new Set(filter.ignoredAudioTracks)).sort((a, b) => a - b);
+    filter.locked = !!locked;
+    return filter;
+}
+
+function getDefaultSequenceFilter() {
+    if (!latestPlan || !latestPlan.activeSequenceName) {
+        return null;
+    }
+
+    return createSequenceFilter(
+        latestPlan.activeSequenceName,
+        latestPlan.videoTrackUsage || [],
+        latestPlan.audioTrackUsage || [],
+        true
+    );
+}
+
+function loadSequenceFilters() {
+    let savedFilters = [];
+
     try {
-        localStorage.setItem(IGNORED_VIDEO_TRACKS_STORAGE_KEY, JSON.stringify(ignoredVideoTracks));
-        localStorage.setItem(IGNORED_AUDIO_TRACKS_STORAGE_KEY, JSON.stringify(ignoredAudioTracks));
+        const parsed = JSON.parse(localStorage.getItem(SEQUENCE_FILTERS_STORAGE_KEY) || '[]');
+        savedFilters = Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        savedFilters = [];
+    }
+
+    selectedSequenceFilters = savedFilters
+        .filter((filter) => filter && filter.sequenceName)
+        .map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+
+    const defaultFilter = getDefaultSequenceFilter();
+    if (!defaultFilter) {
+        renderSequenceFilters();
+        return;
+    }
+
+    if (!selectedSequenceFilters.length) {
+        selectedSequenceFilters = [defaultFilter];
+        saveSequenceFilters();
+        renderSequenceFilters();
+        return;
+    }
+
+    const defaultIndex = selectedSequenceFilters.findIndex((filter) => filter.sequenceName === defaultFilter.sequenceName);
+    if (defaultIndex >= 0) {
+        const existing = selectedSequenceFilters[defaultIndex];
+        existing.videoTrackUsage = defaultFilter.videoTrackUsage;
+        existing.audioTrackUsage = defaultFilter.audioTrackUsage;
+        existing.locked = true;
+        if (defaultIndex !== 0) {
+            selectedSequenceFilters.splice(defaultIndex, 1);
+            selectedSequenceFilters.unshift(existing);
+        }
+    } else {
+        selectedSequenceFilters.unshift(defaultFilter);
+    }
+
+    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+    saveSequenceFilters();
+    renderSequenceFilters();
+}
+
+function saveSequenceFilters() {
+    try {
+        localStorage.setItem(SEQUENCE_FILTERS_STORAGE_KEY, JSON.stringify(selectedSequenceFilters));
     } catch (error) {}
 }
 
-function getTrackUsageEntries(kind) {
-    if (!latestPlan) {
-        return [];
-    }
-
-    return kind === 'video'
-        ? (latestPlan.videoTrackUsage || [])
-        : (latestPlan.audioTrackUsage || []);
+function getSequenceFilter(sequenceName) {
+    return selectedSequenceFilters.find((filter) => filter.sequenceName === sequenceName) || null;
 }
 
-function renderIgnoredTrackChips(kind) {
-    const container = document.getElementById(kind === 'video' ? 'ignoredVideoTracks' : 'ignoredAudioTracks');
-    const values = kind === 'video' ? ignoredVideoTracks : ignoredAudioTracks;
-    container.innerHTML = '';
+function buildTrackOptions(filter, kind) {
+    const entries = kind === 'video' ? filter.videoTrackUsage : filter.audioTrackUsage;
+    const ignored = kind === 'video' ? filter.ignoredVideoTracks : filter.ignoredAudioTracks;
+    return entries.filter((entry) => ignored.indexOf(entry.trackNumber) === -1);
+}
 
-    if (!values.length) {
+function renderTrackChipList(container, kind, filter) {
+    const ignored = kind === 'video' ? filter.ignoredVideoTracks : filter.ignoredAudioTracks;
+
+    if (!ignored.length) {
         const empty = document.createElement('div');
         empty.className = 'small-note';
         empty.textContent = kind === 'video' ? 'No ignored video tracks.' : 'No ignored audio tracks.';
@@ -606,7 +688,7 @@ function renderIgnoredTrackChips(kind) {
         return;
     }
 
-    values.forEach((trackNumber) => {
+    ignored.forEach((trackNumber) => {
         const chip = document.createElement('div');
         chip.className = 'chip';
         chip.textContent = `${kind === 'video' ? 'Ignore Video Medias on Layer V' : 'Ignore Audio Medias on Layer A'}${trackNumber}`;
@@ -614,99 +696,225 @@ function renderIgnoredTrackChips(kind) {
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
         removeButton.textContent = 'x';
-        removeButton.onclick = () => removeIgnoredTrack(kind, trackNumber);
+        removeButton.onclick = () => removeIgnoredTrack(filter.sequenceName, kind, trackNumber);
         chip.appendChild(removeButton);
         container.appendChild(chip);
     });
 }
 
-function renderTrackSelect(kind) {
-    const select = document.getElementById(kind === 'video' ? 'ignoreVideoTrackSelect' : 'ignoreAudioTrackSelect');
-    const ignored = kind === 'video' ? ignoredVideoTracks : ignoredAudioTracks;
-    const entries = getTrackUsageEntries(kind);
-    select.innerHTML = '';
+function renderSequenceGroup(filter, kind) {
+    const group = document.createElement('div');
+    group.className = 'sequence-group';
 
-    const availableEntries = entries.filter((entry) => ignored.indexOf(entry.trackNumber) === -1);
+    const title = document.createElement('div');
+    title.className = 'label';
+    title.textContent = kind === 'video' ? 'Ignore Video Medias On Layers' : 'Ignore Audio Medias On Layers';
+    group.appendChild(title);
 
-    if (!availableEntries.length) {
+    const row = document.createElement('div');
+    row.className = 'filter-row';
+
+    const select = document.createElement('select');
+    const options = buildTrackOptions(filter, kind);
+
+    if (!options.length) {
         const option = document.createElement('option');
         option.value = '';
         option.textContent = kind === 'video' ? 'No video tracks left' : 'No audio tracks left';
         select.appendChild(option);
         select.disabled = true;
+    } else {
+        options.forEach((entry) => {
+            const option = document.createElement('option');
+            option.value = String(entry.trackNumber);
+            option.textContent = `${entry.label} (${entry.clipCount} clips)`;
+            select.appendChild(option);
+        });
+    }
+
+    row.appendChild(select);
+
+    const note = document.createElement('div');
+    note.className = 'small-note';
+    note.textContent = kind === 'video'
+        ? 'Choose a video layer to ignore for this sequence.'
+        : 'Choose an audio layer to ignore for this sequence.';
+    row.appendChild(note);
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.className = 'button-secondary button-small';
+    addButton.textContent = kind === 'video' ? 'Add V' : 'Add A';
+    addButton.disabled = !options.length;
+    addButton.onclick = () => {
+        const trackNumber = parseInt(select.value, 10) || 0;
+        if (trackNumber) {
+            addIgnoredTrack(filter.sequenceName, kind, trackNumber);
+        }
+    };
+    row.appendChild(addButton);
+
+    group.appendChild(row);
+
+    const chips = document.createElement('div');
+    chips.className = 'chip-list';
+    renderTrackChipList(chips, kind, filter);
+    group.appendChild(chips);
+
+    return group;
+}
+
+function renderSequenceFilters() {
+    const container = document.getElementById('sequenceFilters');
+    const hint = document.getElementById('sequenceFilterHint');
+    container.innerHTML = '';
+
+    if (!selectedSequenceFilters.length) {
+        const empty = document.createElement('div');
+        empty.className = 'small-note';
+        empty.textContent = 'No sequences selected yet. Open a sequence in Premiere and add it here.';
+        container.appendChild(empty);
+        hint.textContent = 'Switch to a sequence in Premiere, then click Add Current Active Sequence.';
+        updateSelectionSummary();
         return;
     }
 
-    availableEntries.forEach((entry) => {
-        const option = document.createElement('option');
-        option.value = String(entry.trackNumber);
-        option.textContent = `${entry.label} (${entry.clipCount} clips)`;
-        select.appendChild(option);
+    selectedSequenceFilters.forEach((filter, index) => {
+        const card = document.createElement('div');
+        card.className = 'sequence-card';
+
+        const header = document.createElement('div');
+        header.className = 'sequence-header';
+
+        const titleWrap = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'sequence-title';
+        title.textContent = `Seq ${index + 1}: ${filter.sequenceName}`;
+        titleWrap.appendChild(title);
+
+        const subtitle = document.createElement('div');
+        subtitle.className = 'sequence-subtitle';
+        subtitle.textContent = filter.locked
+            ? 'Current active sequence by default. This one stays unless you refresh the active sequence.'
+            : 'Added from another active sequence. Remove it anytime if you no longer want its track filters.';
+        titleWrap.appendChild(subtitle);
+        header.appendChild(titleWrap);
+
+        if (!filter.locked) {
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'button-secondary button-small';
+            removeButton.textContent = 'x';
+            removeButton.onclick = () => removeSequenceFilter(filter.sequenceName);
+            header.appendChild(removeButton);
+        }
+
+        card.appendChild(header);
+
+        const groups = document.createElement('div');
+        groups.className = 'sequence-groups';
+        groups.appendChild(renderSequenceGroup(filter, 'video'));
+        groups.appendChild(renderSequenceGroup(filter, 'audio'));
+        card.appendChild(groups);
+
+        container.appendChild(card);
     });
 
-    select.disabled = false;
+    hint.textContent = 'Switch to another sequence in Premiere, then click Add Current Active Sequence to include it too. Opening the same sequence again refreshes it instead of duplicating it.';
+    updateSelectionSummary();
 }
 
-function renderTrackFilters() {
-    renderTrackSelect('video');
-    renderTrackSelect('audio');
-    renderIgnoredTrackChips('video');
-    renderIgnoredTrackChips('audio');
-}
-
-function addIgnoredTrack(kind) {
-    const select = document.getElementById(kind === 'video' ? 'ignoreVideoTrackSelect' : 'ignoreAudioTrackSelect');
-    const value = parseInt(select.value, 10) || 0;
-    if (!value) {
+async function addCurrentActiveSequence() {
+    if (isCopying) {
         return;
     }
 
-    if (kind === 'video') {
-        if (ignoredVideoTracks.indexOf(value) === -1) {
-            ignoredVideoTracks.push(value);
-            ignoredVideoTracks.sort((a, b) => a - b);
-        }
-    } else {
-        if (ignoredAudioTracks.indexOf(value) === -1) {
-            ignoredAudioTracks.push(value);
-            ignoredAudioTracks.sort((a, b) => a - b);
-        }
+    if (!(await ensureHostScriptLoaded())) {
+        return;
     }
 
-    saveIgnoredTrackState();
-    renderTrackFilters();
-    updateSelectionSummary();
+    const raw = await callHost('getActiveSequenceTrackUsage()');
+    const data = safeJsonParse(raw);
+
+    if (!data || data.error || !data.sequenceName) {
+        alert(data && data.error ? data.error : 'No active sequence is available in Premiere.');
+        return;
+    }
+
+    const incoming = createSequenceFilter(data.sequenceName, data.videoTrackUsage || [], data.audioTrackUsage || [], false);
+    const existingIndex = selectedSequenceFilters.findIndex((filter) => filter.sequenceName === incoming.sequenceName);
+
+    if (existingIndex >= 0) {
+        const existing = selectedSequenceFilters[existingIndex];
+        existing.videoTrackUsage = incoming.videoTrackUsage;
+        existing.audioTrackUsage = incoming.audioTrackUsage;
+        if (existingIndex === 0) {
+            existing.locked = true;
+        }
+    } else {
+        selectedSequenceFilters.push(incoming);
+    }
+
+    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+    saveSequenceFilters();
+    renderSequenceFilters();
 }
 
-function removeIgnoredTrack(kind, trackNumber) {
-    if (kind === 'video') {
-        ignoredVideoTracks = ignoredVideoTracks.filter((value) => value !== trackNumber);
-    } else {
-        ignoredAudioTracks = ignoredAudioTracks.filter((value) => value !== trackNumber);
+function removeSequenceFilter(sequenceName) {
+    selectedSequenceFilters = selectedSequenceFilters.filter((filter, index) => index === 0 || filter.sequenceName !== sequenceName);
+    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+    saveSequenceFilters();
+    renderSequenceFilters();
+}
+
+function addIgnoredTrack(sequenceName, kind, trackNumber) {
+    const filter = getSequenceFilter(sequenceName);
+    if (!filter || !trackNumber) {
+        return;
     }
 
-    saveIgnoredTrackState();
-    renderTrackFilters();
-    updateSelectionSummary();
+    const key = kind === 'video' ? 'ignoredVideoTracks' : 'ignoredAudioTracks';
+    if (filter[key].indexOf(trackNumber) === -1) {
+        filter[key].push(trackNumber);
+        filter[key].sort((a, b) => a - b);
+    }
+
+    saveSequenceFilters();
+    renderSequenceFilters();
+}
+
+function removeIgnoredTrack(sequenceName, kind, trackNumber) {
+    const filter = getSequenceFilter(sequenceName);
+    if (!filter) {
+        return;
+    }
+
+    const key = kind === 'video' ? 'ignoredVideoTracks' : 'ignoredAudioTracks';
+    filter[key] = filter[key].filter((value) => value !== trackNumber);
+
+    saveSequenceFilters();
+    renderSequenceFilters();
 }
 
 function buildIgnoredMediaSet() {
     const ignoredPaths = new Set();
 
-    getTrackUsageEntries('video').forEach((entry) => {
-        if (ignoredVideoTracks.indexOf(entry.trackNumber) !== -1) {
-            (entry.mediaPaths || []).forEach((mediaPath) => {
-                ignoredPaths.add(normalizeMediaKey(mediaPath));
-            });
-        }
-    });
+    selectedSequenceFilters.forEach((filter) => {
+        (filter.videoTrackUsage || []).forEach((entry) => {
+            if (filter.ignoredVideoTracks.indexOf(entry.trackNumber) !== -1) {
+                (entry.mediaPaths || []).forEach((mediaPath) => {
+                    ignoredPaths.add(normalizeMediaKey(mediaPath));
+                });
+            }
+        });
 
-    getTrackUsageEntries('audio').forEach((entry) => {
-        if (ignoredAudioTracks.indexOf(entry.trackNumber) !== -1) {
-            (entry.mediaPaths || []).forEach((mediaPath) => {
-                ignoredPaths.add(normalizeMediaKey(mediaPath));
-            });
-        }
+        (filter.audioTrackUsage || []).forEach((entry) => {
+            if (filter.ignoredAudioTracks.indexOf(entry.trackNumber) !== -1) {
+                (entry.mediaPaths || []).forEach((mediaPath) => {
+                    ignoredPaths.add(normalizeMediaKey(mediaPath));
+                });
+            }
+        });
     });
 
     return ignoredPaths;
@@ -850,7 +1058,7 @@ async function loadProjectPlan() {
     if (previousSelections) {
         applyTaskSelectionMap(previousSelections);
     }
-    renderTrackFilters();
+    loadSequenceFilters();
     renderSourceTree();
     return true;
 }
@@ -1100,13 +1308,11 @@ async function collect() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     readVersionInfo();
-    loadIgnoredTrackState();
     resetResults();
-    document.getElementById('sourceListBox').style.display = 'block';
-    setText('showListButton', 'Hide List');
+    document.getElementById('sourceListBox').style.display = 'none';
+    setText('showListButton', 'Show List');
     setUpdateButton(`Version ${localVersion}`, false);
     checkForUpdates();
-    renderTrackFilters();
     await loadProjectPlan();
 });
 

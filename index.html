@@ -74,6 +74,13 @@ h1 {
     color: var(--muted);
 }
 
+.hero-top {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
 .actions {
     display: flex;
     gap: 12px;
@@ -98,6 +105,16 @@ button:hover:not(:disabled) {
 button:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+}
+
+#updateButton:disabled {
+    cursor: default;
+}
+
+.button-update-ready {
+    background: linear-gradient(135deg, #56a7ff, #2d73ff);
+    color: #f7fbff;
+    box-shadow: 0 10px 24px rgba(45, 115, 255, 0.28);
 }
 
 .button-secondary {
@@ -190,6 +207,63 @@ button:disabled {
     color: var(--muted);
     font-size: 13px;
     line-height: 1.5;
+}
+
+.filter-grid {
+    display: grid;
+    gap: 16px;
+}
+
+.filter-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.filter-row select {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+    padding: 11px 12px;
+    font: inherit;
+}
+
+.chip-list {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 24px;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-size: 12px;
+}
+
+.chip button {
+    padding: 0;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    box-shadow: none;
+}
+
+.chip button:hover:not(:disabled) {
+    transform: none;
+    color: white;
 }
 
 .tree-box {
@@ -315,7 +389,10 @@ button:disabled {
 <div class="app">
     <section class="hero">
         <div class="eyebrow">Premiere Pro Extension</div>
-        <h1>Project Collector</h1>
+        <div class="hero-top">
+            <h1>Project Collector</h1>
+            <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
+        </div>
         <p>Build a clean delivery folder from the current Premiere project, preserve the project bin structure, and review any copy failures in one place.</p>
         <div class="actions">
             <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
@@ -336,6 +413,29 @@ button:disabled {
             <div class="path-box" id="selectionSummary">Loading project files from Premiere...</div>
             <div class="list-box tree-box" id="sourceListBox" style="margin-top: 14px;">
                 <ul class="tree-list" id="sourceTree"></ul>
+            </div>
+        </div>
+
+        <div class="card full-width">
+            <h2 class="card-title">Ignore Media On Tracks</h2>
+            <p class="selection-note">Skip copying source media used on selected active-sequence tracks. Add as many video or audio tracks as you want to ignore.</p>
+            <div class="filter-grid">
+                <div>
+                    <div class="filter-row">
+                        <div class="label">Video tracks</div>
+                        <select id="ignoreVideoTrackSelect"></select>
+                        <button class="button-secondary button-small" onclick="addIgnoredTrack('video')">Ignore Track</button>
+                    </div>
+                    <div class="chip-list" id="ignoredVideoTracks" style="margin-top: 10px;"></div>
+                </div>
+                <div>
+                    <div class="filter-row">
+                        <div class="label">Audio tracks</div>
+                        <select id="ignoreAudioTrackSelect"></select>
+                        <button class="button-secondary button-small" onclick="addIgnoredTrack('audio')">Ignore Track</button>
+                    </div>
+                    <div class="chip-list" id="ignoredAudioTracks" style="margin-top: 10px;"></div>
+                </div>
             </div>
         </div>
 

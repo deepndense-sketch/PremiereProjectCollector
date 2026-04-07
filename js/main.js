@@ -1,7 +1,10 @@
 ﻿const csInterface = new CSInterface();
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const https = require('https');
+const childProcess = require('child_process');
+const { spawn } = childProcess;
 
 let destination = null;
 let isCopying = false;
@@ -10,9 +13,293 @@ let latestPlan = null;
 let sourceTree = null;
 let listVisible = true;
 let selectionTouched = false;
+let localVersion = 'unknown';
+let remoteVersion = null;
+let ignoredVideoTracks = [];
+let ignoredAudioTracks = [];
+
+const IGNORED_VIDEO_TRACKS_STORAGE_KEY = 'projectcollector.ignoredVideoTracks';
+const IGNORED_AUDIO_TRACKS_STORAGE_KEY = 'projectcollector.ignoredAudioTracks';
 
 function setText(id, value) {
     document.getElementById(id).textContent = value;
+}
+
+function getExtensionRootPath() {
+    try {
+        return csInterface.getSystemPath(SystemPath.EXTENSION);
+    } catch (error) {
+        return __dirname;
+    }
+}
+
+function getVersionFilePath() {
+    return path.join(getExtensionRootPath(), 'version.json');
+}
+
+function getUpdateScriptPath() {
+    return path.join(getExtensionRootPath(), 'update_from_github.ps1');
+}
+
+function getTempUpdaterScriptPath() {
+    return path.join(os.tmpdir(), 'PremiereProjectCollector_update_launch.ps1');
+}
+
+function getTempUpdaterZipPath() {
+    return path.join(os.tmpdir(), 'PremiereProjectCollector_update_package.zip');
+}
+
+function getTempUpdaterResultPath() {
+    return path.join(os.tmpdir(), 'PremiereProjectCollector_update_result.json');
+}
+
+function getTempUpdaterLogPath() {
+    return path.join(os.tmpdir(), 'PremiereProjectCollector_update_log.txt');
+}
+
+function getUserCepExtensionPath() {
+    return path.join(process.env.APPDATA || '', 'Adobe', 'CEP', 'extensions', 'PremiereProjectCollector');
+}
+
+function fileExists(filePath) {
+    try {
+        return !!filePath && fs.existsSync(filePath);
+    } catch (error) {
+        return false;
+    }
+}
+
+function readVersionInfo() {
+    try {
+        const raw = fs.readFileSync(getVersionFilePath(), 'utf8');
+        const parsed = JSON.parse(raw);
+        localVersion = parsed.version || 'unknown';
+    } catch (error) {
+        localVersion = 'unknown';
+    }
+
+    return localVersion;
+}
+
+function compareVersions(a, b) {
+    const aParts = String(a || '0').split('.').map((part) => parseInt(part, 10) || 0);
+    const bParts = String(b || '0').split('.').map((part) => parseInt(part, 10) || 0);
+    const length = Math.max(aParts.length, bParts.length);
+
+    for (let i = 0; i < length; i += 1) {
+        const left = aParts[i] || 0;
+        const right = bParts[i] || 0;
+        if (left > right) {
+            return 1;
+        }
+        if (left < right) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+function setUpdateButton(label, isUpdateAvailable) {
+    const button = document.getElementById('updateButton');
+    button.textContent = label;
+    button.disabled = isCopying || !isUpdateAvailable;
+    button.classList.toggle('button-update-ready', isUpdateAvailable);
+}
+
+async function checkForUpdates() {
+    const remoteUrl = 'https://raw.githubusercontent.com/deepndense-sketch/PremiereProjectCollector/main/version.json';
+    setUpdateButton(`Version ${localVersion}`, false);
+
+    try {
+        const remote = await new Promise((resolve, reject) => {
+            https.get(remoteUrl, (response) => {
+                if (response.statusCode !== 200) {
+                    reject(new Error(`HTTP ${response.statusCode}`));
+                    response.resume();
+                    return;
+                }
+
+                let raw = '';
+                response.setEncoding('utf8');
+                response.on('data', (chunk) => {
+                    raw += chunk;
+                });
+                response.on('end', () => {
+                    try {
+                        resolve(JSON.parse(raw));
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            }).on('error', reject);
+        });
+
+        remoteVersion = remote.version || 'unknown';
+        if (compareVersions(remoteVersion, localVersion) > 0) {
+            setUpdateButton(`Update to ${remoteVersion}`, true);
+        } else {
+            setUpdateButton(`Version ${localVersion}`, false);
+        }
+    } catch (error) {
+        setUpdateButton(`Version ${localVersion}`, false);
+    }
+}
+
+function delay(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+function downloadFile(url, destinationPath) {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(destinationPath);
+        const request = https.get(url, (response) => {
+            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                file.close(() => {
+                    fs.unlink(destinationPath, () => {
+                        downloadFile(response.headers.location, destinationPath).then(resolve).catch(reject);
+                    });
+                });
+                return;
+            }
+
+            if (response.statusCode !== 200) {
+                file.close(() => {
+                    fs.unlink(destinationPath, () => {});
+                    reject(new Error(`HTTP ${response.statusCode}`));
+                });
+                response.resume();
+                return;
+            }
+
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close(resolve);
+            });
+        });
+
+        request.on('error', (error) => {
+            file.close(() => {
+                fs.unlink(destinationPath, () => {});
+                reject(error);
+            });
+        });
+
+        file.on('error', (error) => {
+            file.close(() => {
+                fs.unlink(destinationPath, () => {});
+                reject(error);
+            });
+        });
+    });
+}
+
+async function monitorUpdaterCompletion() {
+    const maxAttempts = 10;
+    const resultPath = getTempUpdaterResultPath();
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await delay(3000);
+
+        if (fileExists(resultPath)) {
+            try {
+                const raw = fs.readFileSync(resultPath, 'utf8');
+                const parsed = JSON.parse(raw);
+                if (parsed.ok) {
+                    readVersionInfo();
+                    await checkForUpdates();
+                    setText('summaryText', `Update complete. Installed version: ${localVersion}. Restart Premiere Pro if the panel is already open.`);
+                    return;
+                }
+
+                setText('summaryText', `Updater failed. ${parsed.message || 'Unknown error.'} Log: ${parsed.logPath || getTempUpdaterLogPath()}`);
+                return;
+            } catch (error) {
+                setText('summaryText', `Updater finished, but the result file could not be read. ${error.message}`);
+                return;
+            }
+        }
+
+        readVersionInfo();
+        await checkForUpdates();
+
+        if (remoteVersion && compareVersions(remoteVersion, localVersion) <= 0) {
+            setText('summaryText', `Update complete. Installed version: ${localVersion}. Restart Premiere Pro if the panel is already open.`);
+            return;
+        }
+    }
+
+    setText('summaryText', `Updater finished launching, but this panel still sees version ${localVersion}. Reopen the panel or restart Premiere Pro and check again.`);
+}
+
+function runGithubUpdate() {
+    if (isCopying) {
+        return;
+    }
+
+    const updateScriptPath = getUpdateScriptPath();
+    if (!fileExists(updateScriptPath)) {
+        setText('summaryText', 'Update script was not found.');
+        return;
+    }
+
+    if (remoteVersion && compareVersions(remoteVersion, localVersion) <= 0) {
+        setText('summaryText', `Version ${localVersion} is already installed.`);
+        return;
+    }
+
+    const tempUpdaterScriptPath = getTempUpdaterScriptPath();
+    const tempUpdaterZipPath = getTempUpdaterZipPath();
+    const tempUpdaterResultPath = getTempUpdaterResultPath();
+    const tempUpdaterLogPath = getTempUpdaterLogPath();
+    const remoteZipUrl = 'https://github.com/deepndense-sketch/PremiereProjectCollector/archive/refs/heads/main.zip';
+
+    setText('summaryText', 'Downloading update package from GitHub...');
+
+    try {
+        fs.copyFileSync(updateScriptPath, tempUpdaterScriptPath);
+        if (fileExists(tempUpdaterZipPath)) {
+            fs.unlinkSync(tempUpdaterZipPath);
+        }
+        if (fileExists(tempUpdaterResultPath)) {
+            fs.unlinkSync(tempUpdaterResultPath);
+        }
+        if (fileExists(tempUpdaterLogPath)) {
+            fs.unlinkSync(tempUpdaterLogPath);
+        }
+    } catch (error) {
+        setText('summaryText', `Could not prepare updater. ${error.message}`);
+        return;
+    }
+
+    downloadFile(remoteZipUrl, tempUpdaterZipPath)
+        .then(() => {
+            const escapedScriptPath = tempUpdaterScriptPath.replace(/'/g, "''");
+            const escapedZipPath = tempUpdaterZipPath.replace(/'/g, "''");
+            const destination = getUserCepExtensionPath().replace(/'/g, "''");
+            const escapedResultPath = tempUpdaterResultPath.replace(/'/g, "''");
+            const escapedLogPath = tempUpdaterLogPath.replace(/'/g, "''");
+            const command = `Start-Process PowerShell -Verb RunAs -ArgumentList '-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-File','${escapedScriptPath}','-ZipPath','${escapedZipPath}','-Destination','${destination}','-ResultPath','${escapedResultPath}','-LogPath','${escapedLogPath}'`;
+
+            childProcess.execFile(
+                'powershell.exe',
+                ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
+                (error) => {
+                    if (error) {
+                        setText('summaryText', `Could not launch updater. ${error.message}`);
+                        return;
+                    }
+
+                    setText('summaryText', `Updater launched for ${getUserCepExtensionPath()}. Accept the Windows prompt if it appears.`);
+                    monitorUpdaterCompletion();
+                }
+            );
+        })
+        .catch((error) => {
+            setText('summaryText', `Could not prepare updater. ${error.message}`);
+        });
 }
 
 function escapeForEvalScript(value) {
@@ -215,18 +502,29 @@ function updateSelectionSummary() {
 
     const total = latestPlan.tasks.length;
     const included = getSelectedTasks().length;
+    const ignoredTrackSummary = [];
+
+    if (ignoredVideoTracks.length) {
+        ignoredTrackSummary.push(`ignored video: ${ignoredVideoTracks.map((trackNumber) => `V${trackNumber}`).join(', ')}`);
+    }
+
+    if (ignoredAudioTracks.length) {
+        ignoredTrackSummary.push(`ignored audio: ${ignoredAudioTracks.map((trackNumber) => `A${trackNumber}`).join(', ')}`);
+    }
+
+    const suffix = ignoredTrackSummary.length ? ` (${ignoredTrackSummary.join(' | ')})` : '';
 
     if (!selectionTouched) {
-        setText('selectionSummary', `All ${total} files will be included by default. Once you change the list, only the checked items will be copied.`);
+        setText('selectionSummary', `All ${total} files will be included by default. Once you change the list, only the checked items will be copied.${suffix}`);
         return;
     }
 
     if (included === 0) {
-        setText('selectionSummary', 'No files are selected. Copy will process zero files until you check items again.');
+        setText('selectionSummary', `No files are selected. Copy will process zero files until you check items again.${suffix}`);
         return;
     }
 
-    setText('selectionSummary', `${included} of ${total} files are selected for copy.`);
+    setText('selectionSummary', `${included} of ${total} files are selected for copy.${suffix}`);
 }
 
 function getSelectedTaskIndexSet() {
@@ -256,6 +554,162 @@ function getSelectedTasks() {
 
     const selectedIndexes = getSelectedTaskIndexSet();
     return latestPlan.tasks.filter((task, index) => selectedIndexes.has(index));
+}
+
+function normalizeMediaKey(filePath) {
+    return tryResolveWindowsPath(filePath).toLowerCase();
+}
+
+function loadIgnoredTrackState() {
+    try {
+        const savedVideo = JSON.parse(localStorage.getItem(IGNORED_VIDEO_TRACKS_STORAGE_KEY) || '[]');
+        ignoredVideoTracks = Array.isArray(savedVideo) ? savedVideo : [];
+    } catch (error) {
+        ignoredVideoTracks = [];
+    }
+
+    try {
+        const savedAudio = JSON.parse(localStorage.getItem(IGNORED_AUDIO_TRACKS_STORAGE_KEY) || '[]');
+        ignoredAudioTracks = Array.isArray(savedAudio) ? savedAudio : [];
+    } catch (error) {
+        ignoredAudioTracks = [];
+    }
+}
+
+function saveIgnoredTrackState() {
+    try {
+        localStorage.setItem(IGNORED_VIDEO_TRACKS_STORAGE_KEY, JSON.stringify(ignoredVideoTracks));
+        localStorage.setItem(IGNORED_AUDIO_TRACKS_STORAGE_KEY, JSON.stringify(ignoredAudioTracks));
+    } catch (error) {}
+}
+
+function getTrackUsageEntries(kind) {
+    if (!latestPlan) {
+        return [];
+    }
+
+    return kind === 'video'
+        ? (latestPlan.videoTrackUsage || [])
+        : (latestPlan.audioTrackUsage || []);
+}
+
+function renderIgnoredTrackChips(kind) {
+    const container = document.getElementById(kind === 'video' ? 'ignoredVideoTracks' : 'ignoredAudioTracks');
+    const values = kind === 'video' ? ignoredVideoTracks : ignoredAudioTracks;
+    container.innerHTML = '';
+
+    if (!values.length) {
+        const empty = document.createElement('div');
+        empty.className = 'small-note';
+        empty.textContent = kind === 'video' ? 'No ignored video tracks.' : 'No ignored audio tracks.';
+        container.appendChild(empty);
+        return;
+    }
+
+    values.forEach((trackNumber) => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.textContent = `${kind === 'video' ? 'Ignore Video Medias on Layer V' : 'Ignore Audio Medias on Layer A'}${trackNumber}`;
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.textContent = 'x';
+        removeButton.onclick = () => removeIgnoredTrack(kind, trackNumber);
+        chip.appendChild(removeButton);
+        container.appendChild(chip);
+    });
+}
+
+function renderTrackSelect(kind) {
+    const select = document.getElementById(kind === 'video' ? 'ignoreVideoTrackSelect' : 'ignoreAudioTrackSelect');
+    const ignored = kind === 'video' ? ignoredVideoTracks : ignoredAudioTracks;
+    const entries = getTrackUsageEntries(kind);
+    select.innerHTML = '';
+
+    const availableEntries = entries.filter((entry) => ignored.indexOf(entry.trackNumber) === -1);
+
+    if (!availableEntries.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = kind === 'video' ? 'No video tracks left' : 'No audio tracks left';
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+    }
+
+    availableEntries.forEach((entry) => {
+        const option = document.createElement('option');
+        option.value = String(entry.trackNumber);
+        option.textContent = `${entry.label} (${entry.clipCount} clips)`;
+        select.appendChild(option);
+    });
+
+    select.disabled = false;
+}
+
+function renderTrackFilters() {
+    renderTrackSelect('video');
+    renderTrackSelect('audio');
+    renderIgnoredTrackChips('video');
+    renderIgnoredTrackChips('audio');
+}
+
+function addIgnoredTrack(kind) {
+    const select = document.getElementById(kind === 'video' ? 'ignoreVideoTrackSelect' : 'ignoreAudioTrackSelect');
+    const value = parseInt(select.value, 10) || 0;
+    if (!value) {
+        return;
+    }
+
+    if (kind === 'video') {
+        if (ignoredVideoTracks.indexOf(value) === -1) {
+            ignoredVideoTracks.push(value);
+            ignoredVideoTracks.sort((a, b) => a - b);
+        }
+    } else {
+        if (ignoredAudioTracks.indexOf(value) === -1) {
+            ignoredAudioTracks.push(value);
+            ignoredAudioTracks.sort((a, b) => a - b);
+        }
+    }
+
+    saveIgnoredTrackState();
+    renderTrackFilters();
+    updateSelectionSummary();
+}
+
+function removeIgnoredTrack(kind, trackNumber) {
+    if (kind === 'video') {
+        ignoredVideoTracks = ignoredVideoTracks.filter((value) => value !== trackNumber);
+    } else {
+        ignoredAudioTracks = ignoredAudioTracks.filter((value) => value !== trackNumber);
+    }
+
+    saveIgnoredTrackState();
+    renderTrackFilters();
+    updateSelectionSummary();
+}
+
+function buildIgnoredMediaSet() {
+    const ignoredPaths = new Set();
+
+    getTrackUsageEntries('video').forEach((entry) => {
+        if (ignoredVideoTracks.indexOf(entry.trackNumber) !== -1) {
+            (entry.mediaPaths || []).forEach((mediaPath) => {
+                ignoredPaths.add(normalizeMediaKey(mediaPath));
+            });
+        }
+    });
+
+    getTrackUsageEntries('audio').forEach((entry) => {
+        if (ignoredAudioTracks.indexOf(entry.trackNumber) !== -1) {
+            (entry.mediaPaths || []).forEach((mediaPath) => {
+                ignoredPaths.add(normalizeMediaKey(mediaPath));
+            });
+        }
+    });
+
+    return ignoredPaths;
 }
 
 function buildTaskSelectionMap() {
@@ -396,6 +850,7 @@ async function loadProjectPlan() {
     if (previousSelections) {
         applyTaskSelectionMap(previousSelections);
     }
+    renderTrackFilters();
     renderSourceTree();
     return true;
 }
@@ -479,6 +934,7 @@ function setBusyState(busy) {
     isCopying = busy;
     document.getElementById('chooseButton').disabled = busy;
     document.getElementById('collectButton').disabled = busy;
+    document.getElementById('updateButton').disabled = busy || !(remoteVersion && compareVersions(remoteVersion, localVersion) > 0);
 }
 
 function resetResults() {
@@ -576,7 +1032,9 @@ async function collect() {
     }
 
     const escapedDestination = escapeForEvalScript(destination);
-    const selectedTasks = getSelectedTasks();
+    const ignoredMediaSet = buildIgnoredMediaSet();
+    const treeSelectedTasks = getSelectedTasks();
+    const selectedTasks = treeSelectedTasks.filter((task) => !ignoredMediaSet.has(normalizeMediaKey(task.source)));
     const plan = {
         rootPath: path.join(destination, latestPlan.projectName),
         tasks: selectedTasks,
@@ -595,8 +1053,11 @@ async function collect() {
     const failures = [];
     const missingMedia = Array.isArray(plan.missingMedia) ? plan.missingMedia : [];
     const skippedBySelection = (latestPlan.tasks || [])
-        .filter((task) => !selectedTasks.includes(task))
+        .filter((task) => !treeSelectedTasks.includes(task))
         .map((task) => `${task.source} -> skipped by selection`);
+    const skippedByIgnoredTracks = (latestPlan.tasks || [])
+        .filter((task) => ignoredMediaSet.has(normalizeMediaKey(task.source)))
+        .map((task) => `${task.source} -> skipped by ignored track filter`);
 
     setText('summaryText', `Windows robocopy mode active. Copying into ${plan.rootPath}`);
     setText('progressText', `0 / ${total} files copied`);
@@ -629,18 +1090,23 @@ async function collect() {
     setText('currentFile', total ? 'Copy finished' : 'No copyable media found');
     setText(
         'summaryText',
-        `Completed. ${total - failures.length} copied, ${failures.length} failed, ${missingMedia.length + skippedBySelection.length} skipped.`
+        `Completed. ${total - failures.length} copied, ${failures.length} failed, ${missingMedia.length + skippedBySelection.length + skippedByIgnoredTracks.length} skipped.`
     );
 
     renderList('errorList', failures, (item) => `${item.source} -> ${item.destination} | ${item.message}`);
-    renderList('missingList', missingMedia.concat(skippedBySelection), (item) => item);
+    renderList('missingList', missingMedia.concat(skippedBySelection, skippedByIgnoredTracks), (item) => item);
     setBusyState(false);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    readVersionInfo();
+    loadIgnoredTrackState();
     resetResults();
     document.getElementById('sourceListBox').style.display = 'block';
     setText('showListButton', 'Hide List');
+    setUpdateButton(`Version ${localVersion}`, false);
+    checkForUpdates();
+    renderTrackFilters();
     await loadProjectPlan();
 });
 

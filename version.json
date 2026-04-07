@@ -1,0 +1,5 @@
+{
+  "version": "1.3.0",
+  "channel": "main",
+  "notes": "Release 1.3.0 adds GitHub updating and track-based media ignore controls."
+}

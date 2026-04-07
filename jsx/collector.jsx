@@ -163,6 +163,91 @@ function pcStringsJson(items) {
     return '[' + out.join(',') + ']';
 }
 
+function pcTrackUsageJson(items) {
+    var out = [];
+    var i;
+    for (i = 0; i < items.length; i++) {
+        var entry = items[i];
+        out.push(
+            '{' +
+            '"trackNumber":' + entry.trackNumber + ',' +
+            '"label":"' + pcJsonEscape(entry.label) + '",' +
+            '"clipCount":' + entry.clipCount + ',' +
+            '"mediaPaths":' + pcStringsJson(entry.mediaPaths) +
+            '}'
+        );
+    }
+    return '[' + out.join(',') + ']';
+}
+
+function pcTrackCollectionUsage(tracks, prefix) {
+    var usage = [];
+    var i;
+
+    if (!tracks || tracks.numTracks === undefined) {
+        return usage;
+    }
+
+    for (i = 0; i < tracks.numTracks; i++) {
+        var mediaMap = {};
+        var mediaPaths = [];
+        var clipCount = 0;
+        var track = tracks[i];
+        var clips = null;
+        var j;
+
+        try {
+            clips = track.clips;
+        } catch (e) {
+            clips = null;
+        }
+
+        if (clips && clips.numItems !== undefined) {
+            for (j = 0; j < clips.numItems; j++) {
+                var clip = clips[j];
+                var projectItem = null;
+                var mediaPath = '';
+
+                try {
+                    projectItem = clip.projectItem;
+                } catch (e2) {
+                    projectItem = null;
+                }
+
+                if (!projectItem || !projectItem.getMediaPath) {
+                    continue;
+                }
+
+                try {
+                    mediaPath = projectItem.getMediaPath();
+                } catch (e3) {
+                    mediaPath = '';
+                }
+
+                if (!mediaPath || mediaPath === '') {
+                    continue;
+                }
+
+                clipCount += 1;
+
+                if (!mediaMap[mediaPath]) {
+                    mediaMap[mediaPath] = true;
+                    mediaPaths.push(mediaPath);
+                }
+            }
+        }
+
+        usage.push({
+            trackNumber: i + 1,
+            label: prefix + (i + 1),
+            clipCount: clipCount,
+            mediaPaths: mediaPaths
+        });
+    }
+
+    return usage;
+}
+
 function pcBuildPlan(destination) {
     if (!app || !app.project || !app.project.rootItem) {
         throw new Error('No Premiere project is currently open.');
@@ -175,15 +260,29 @@ function pcBuildPlan(destination) {
     var tasks = [];
     var taskMap = {};
     var missingMedia = [];
+    var activeSequenceName = '';
+    var videoTrackUsage = [];
+    var audioTrackUsage = [];
 
     pcCollect(app.project.rootItem, '', folders, folderMap, tasks, taskMap, missingMedia);
+
+    try {
+        if (app.project.activeSequence) {
+            activeSequenceName = app.project.activeSequence.name || '';
+            videoTrackUsage = pcTrackCollectionUsage(app.project.activeSequence.videoTracks, 'V');
+            audioTrackUsage = pcTrackCollectionUsage(app.project.activeSequence.audioTracks, 'A');
+        }
+    } catch (e4) {}
 
     return {
         projectName: rootName,
         rootPath: rootPath,
         folders: folders,
         tasks: tasks,
-        missingMedia: missingMedia
+        missingMedia: missingMedia,
+        activeSequenceName: activeSequenceName,
+        videoTrackUsage: videoTrackUsage,
+        audioTrackUsage: audioTrackUsage
     };
 }
 
@@ -195,7 +294,10 @@ function getProjectCopyPlan(destination) {
             '"rootPath":"' + pcJsonEscape(plan.rootPath) + '",' +
             '"folders":' + pcStringsJson(plan.folders) + ',' +
             '"tasks":' + pcTasksJson(plan.tasks) + ',' +
-            '"missingMedia":' + pcStringsJson(plan.missingMedia) +
+            '"missingMedia":' + pcStringsJson(plan.missingMedia) + ',' +
+            '"activeSequenceName":"' + pcJsonEscape(plan.activeSequenceName) + '",' +
+            '"videoTrackUsage":' + pcTrackUsageJson(plan.videoTrackUsage) + ',' +
+            '"audioTrackUsage":' + pcTrackUsageJson(plan.audioTrackUsage) +
             '}';
     } catch (e) {
         return pcJsonError(e.toString());

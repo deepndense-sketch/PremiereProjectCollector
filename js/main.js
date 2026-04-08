@@ -378,6 +378,15 @@ function buildSequenceFiltersPayload() {
     }));
 }
 
+async function copyProjectFileIntoCollectedRoot(rootPath, projectPath) {
+    if (!rootPath || !projectPath) {
+        return { success: false, message: 'Project path was not available.' };
+    }
+
+    const destinationPath = path.join(rootPath, path.basename(projectPath));
+    return copyFileWithRobocopy(projectPath, destinationPath);
+}
+
 function callHost(script) {
     return new Promise((resolve) => {
         csInterface.evalScript(script, (result) => {
@@ -597,18 +606,21 @@ function updateSelectionSummary() {
     }
 
     const suffix = modeSummary.length ? ` (${modeSummary.join(' || ')})` : '';
+    const treeScopeNote = (sequenceOnlyMode || ignoredTrackSummary.length)
+        ? ' Source File List still shows the full project tree; final copy is reduced later by sequence mode and ignored tracks.'
+        : '';
 
     if (!selectionTouched) {
-        setText('selectionSummary', `All ${total} files will be included by default. Once you change the list, only the checked items will be copied.${suffix}`);
+        setText('selectionSummary', `All ${total} files will be included by default. Once you change the list, only the checked items will be copied.${suffix}${treeScopeNote}`);
         return;
     }
 
     if (included === 0) {
-        setText('selectionSummary', `No files are selected. Copy will process zero files until you check items again.${suffix}`);
+        setText('selectionSummary', `No files are selected. Copy will process zero files until you check items again.${suffix}${treeScopeNote}`);
         return;
     }
 
-    setText('selectionSummary', `${included} of ${total} files are selected for copy.${suffix}`);
+    setText('selectionSummary', `${included} of ${total} files are selected for copy.${suffix}${treeScopeNote}`);
 }
 
 function getSelectedTaskIndexSet() {
@@ -1434,6 +1446,24 @@ async function collect() {
         }
     }
 
+    let copiedProjectMessage = '';
+    if (latestPlan && latestPlan.projectPath) {
+        setText('currentFile', 'Saving and copying Premiere project file');
+        const projectSaveRaw = await callHost('saveCurrentProjectAndGetPath()');
+        const projectSaveInfo = safeJsonParse(projectSaveRaw);
+
+        if (projectSaveInfo && !projectSaveInfo.error && projectSaveInfo.projectPath) {
+            const projectCopyResult = await copyProjectFileIntoCollectedRoot(plan.rootPath, projectSaveInfo.projectPath);
+            if (projectCopyResult.success) {
+                copiedProjectMessage = ' Project file copied.';
+            } else {
+                copiedProjectMessage = ` Project file copy failed: ${projectCopyResult.message || 'Unknown error'}.`;
+            }
+        } else {
+            copiedProjectMessage = ` Project file copy skipped.${projectSaveInfo && projectSaveInfo.error ? ` ${projectSaveInfo.error}` : ''}`;
+        }
+    }
+
     setText('currentFile', total ? 'Copy finished' : 'No copyable media found');
     let reducedProjectMessage = '';
 
@@ -1451,7 +1481,7 @@ async function collect() {
 
     setText(
         'summaryText',
-        `Completed. ${total - failures.length} copied, ${failures.length} failed, ${missingMedia.length + skippedBySelection.length + skippedBySequenceScope.length + skippedByIgnoredTracks.length} skipped.${reducedProjectMessage}`
+        `Completed. ${total - failures.length} copied, ${failures.length} failed, ${missingMedia.length + skippedBySelection.length + skippedBySequenceScope.length + skippedByIgnoredTracks.length} skipped.${copiedProjectMessage}${reducedProjectMessage}`
     );
 
     renderList('errorList', failures, (item) => `${item.source} -> ${item.destination} | ${item.message}`);

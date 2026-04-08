@@ -522,12 +522,17 @@ function pcBuildPlan(destination) {
     var tasks = [];
     var taskMap = {};
     var missingMedia = [];
+    var projectPath = '';
     var activeSequenceName = '';
     var activeSequenceID = '';
     var videoTrackUsage = [];
     var audioTrackUsage = [];
 
     pcCollect(app.project.rootItem, '', folders, folderMap, tasks, taskMap, missingMedia);
+
+    try {
+        projectPath = app.project.path || '';
+    } catch (eProjectPath) {}
 
     try {
         if (app.project.activeSequence) {
@@ -544,6 +549,7 @@ function pcBuildPlan(destination) {
         folders: folders,
         tasks: tasks,
         missingMedia: missingMedia,
+        projectPath: projectPath,
         activeSequenceName: activeSequenceName,
         activeSequenceID: activeSequenceID,
         videoTrackUsage: videoTrackUsage,
@@ -560,6 +566,7 @@ function getProjectCopyPlan(destination) {
             '"folders":' + pcStringsJson(plan.folders) + ',' +
             '"tasks":' + pcTasksJson(plan.tasks) + ',' +
             '"missingMedia":' + pcStringsJson(plan.missingMedia) + ',' +
+            '"projectPath":"' + pcJsonEscape(plan.projectPath) + '",' +
             '"activeSequenceName":"' + pcJsonEscape(plan.activeSequenceName) + '",' +
             '"activeSequenceID":"' + pcJsonEscape(plan.activeSequenceID) + '",' +
             '"videoTrackUsage":' + pcTrackUsageJson(plan.videoTrackUsage) + ',' +
@@ -658,6 +665,27 @@ function createReducedProjectFromSequenceSelection(destinationFolder, sequenceID
             '"imported":"' + pcJsonEscape(importResult) + '",' +
             '"saved":"' + pcJsonEscape(saveResult) + '",' +
             '"reopenedOriginal":"' + pcJsonEscape(reopenResult) + '"' +
+            '}';
+    } catch (e) {
+        return pcJsonError(e.toString());
+    }
+}
+
+function saveCurrentProjectAndGetPath() {
+    try {
+        if (!app || !app.project) {
+            throw new Error('No Premiere project is currently open.');
+        }
+
+        var projectPath = app.project.path || '';
+        if (!projectPath || projectPath === '') {
+            throw new Error('Save the Premiere project first before copying the project file.');
+        }
+
+        app.project.save();
+
+        return '{' +
+            '"projectPath":"' + pcJsonEscape(projectPath) + '"' +
             '}';
     } catch (e) {
         return pcJsonError(e.toString());

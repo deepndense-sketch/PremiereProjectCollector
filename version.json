@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
+  "version": "1.5.1",
   "channel": "main",
-  "notes": "Release 1.5.0 adds chosen-sequence-only collection with nested-sequence media gathering and optional reduced project creation."
+  "notes": "Release 1.5.1 clarifies Source File List filtering behavior and copies the saved Premiere project file into the collected root folder."
 }

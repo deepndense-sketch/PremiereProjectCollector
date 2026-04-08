@@ -743,7 +743,7 @@ function renderSequenceGroup(filter, kind) {
 
     const addButton = document.createElement('button');
     addButton.type = 'button';
-    addButton.className = 'button-secondary button-small';
+    addButton.className = 'button-accent button-small';
     addButton.textContent = kind === 'video' ? 'Add V' : 'Add A';
     addButton.disabled = !options.length;
     addButton.onclick = () => {
@@ -803,7 +803,7 @@ function renderSequenceFilters() {
         if (!filter.locked) {
             const removeButton = document.createElement('button');
             removeButton.type = 'button';
-            removeButton.className = 'button-secondary button-small';
+            removeButton.className = 'button-danger-soft button-small';
             removeButton.textContent = 'x';
             removeButton.onclick = () => removeSequenceFilter(filter.sequenceName);
             header.appendChild(removeButton);

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "SRC=D:\Work\Tools\PremiereProjectCollector_FINAL"
+set "SRC=D:\Work\Tools\PremiereProjectCollector"
 set "DEST=%APPDATA%\Adobe\CEP\extensions\PremiereProjectCollector"
 set "PARENT=%APPDATA%\Adobe\CEP\extensions"
 set "RC=0"

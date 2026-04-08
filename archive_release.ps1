@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$sourceRoot = "D:\Work\Tools\PremiereProjectCollector_FINAL"
+$sourceRoot = "D:\Work\Tools\PremiereProjectCollector"
 $archiveRoot = "D:\Work\Tools\PremiereProjectCollector_Versions"
 
 if (-not $Version -or -not $Version.Trim()) {

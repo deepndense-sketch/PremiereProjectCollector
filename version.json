@@ -1,5 +1,5 @@
 {
-  "version": "1.4.2",
+  "version": "1.4.3",
   "channel": "main",
-  "notes": "Release 1.4.2 moves destination and progress into one workflow block, remembers the destination path, and keeps track ignore collapsed by default."
+  "notes": "Release 1.4.3 makes the header version control compact by default while keeping the blue update state for available updates."
 }

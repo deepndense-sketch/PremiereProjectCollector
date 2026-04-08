@@ -278,6 +278,26 @@ button:disabled {
     border-radius: 10px;
 }
 
+.option-stack {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.option-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+.option-row input[type="checkbox"] {
+    margin-top: 3px;
+}
+
 .filter-grid {
     display: grid;
     gap: 16px;
@@ -532,6 +552,16 @@ button:disabled {
             </div>
             <div id="ignoreSectionContent" style="display: none;">
                 <p class="selection-note" style="margin-top: 14px;">Skip copying source media used on selected tracks from one or more chosen sequences. The current active sequence is added by default, and you can switch sequences in Premiere and add more.</p>
+                <div class="option-stack">
+                    <label class="option-row">
+                        <input id="sequenceOnlyMode" type="checkbox" onchange="toggleSequenceOnlyMode()">
+                        <span>Copy only media used by the chosen sequences, and include all nested sequences used inside them.</span>
+                    </label>
+                    <label class="option-row">
+                        <input id="createReducedProject" type="checkbox" onchange="toggleCreateReducedProject()">
+                        <span>Create a reduced Premiere project from the chosen sequences after media copy finishes.</span>
+                    </label>
+                </div>
                 <div class="tree-toolbar">
                     <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
                 </div>

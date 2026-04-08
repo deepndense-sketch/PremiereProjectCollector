@@ -18,9 +18,27 @@ let remoteVersion = null;
 let selectedSequenceFilters = [];
 
 const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
+const DESTINATION_STORAGE_KEY = 'projectcollector.destination';
+const IGNORE_SECTION_VISIBLE_STORAGE_KEY = 'projectcollector.ignoreSectionVisible';
 
 function setText(id, value) {
     document.getElementById(id).textContent = value;
+}
+
+function setIgnoreSectionVisibility(visible) {
+    const content = document.getElementById('ignoreSectionContent');
+    const button = document.getElementById('toggleIgnoreButton');
+    content.style.display = visible ? 'block' : 'none';
+    button.textContent = visible ? 'Hide' : 'Show';
+
+    try {
+        localStorage.setItem(IGNORE_SECTION_VISIBLE_STORAGE_KEY, visible ? '1' : '0');
+    } catch (error) {}
+}
+
+function toggleIgnoreSection() {
+    const content = document.getElementById('ignoreSectionContent');
+    setIgnoreSectionVisibility(content.style.display === 'none');
 }
 
 function getExtensionRootPath() {
@@ -1205,6 +1223,9 @@ async function chooseFolder() {
     if (result.data.length > 0) {
         destination = result.data[0];
         setText('path', destination);
+        try {
+            localStorage.setItem(DESTINATION_STORAGE_KEY, destination);
+        } catch (error) {}
         setText('summaryText', 'Destination ready. Click Copy Project Media to begin.');
     }
 }
@@ -1309,8 +1330,23 @@ async function collect() {
 document.addEventListener('DOMContentLoaded', async () => {
     readVersionInfo();
     resetResults();
+    try {
+        const savedDestination = localStorage.getItem(DESTINATION_STORAGE_KEY) || '';
+        if (savedDestination) {
+            destination = savedDestination;
+            setText('path', destination);
+            setText('summaryText', 'Saved destination loaded. Click Copy Project Media to begin.');
+        }
+    } catch (error) {}
+
     document.getElementById('sourceListBox').style.display = 'none';
     setText('showListButton', 'Show List');
+    try {
+        const ignoreVisible = localStorage.getItem(IGNORE_SECTION_VISIBLE_STORAGE_KEY) === '1';
+        setIgnoreSectionVisibility(ignoreVisible);
+    } catch (error) {
+        setIgnoreSectionVisibility(false);
+    }
     setUpdateButton(`Version ${localVersion}`, false);
     checkForUpdates();
     await loadProjectPlan();

@@ -93,6 +93,30 @@ h1 {
     margin-top: 18px;
 }
 
+.stack {
+    display: grid;
+    gap: 14px;
+}
+
+.inline-path-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: center;
+}
+
+.inline-path-row .path-box {
+    min-height: 52px;
+    padding: 13px 16px;
+}
+
+.section-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
 button {
     border: 0;
     border-radius: 12px;
@@ -233,6 +257,12 @@ button:disabled {
     color: var(--muted);
     font-size: 12px;
     line-height: 1.45;
+}
+
+.section-toggle {
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 10px;
 }
 
 .filter-grid {
@@ -464,10 +494,6 @@ button:disabled {
             <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
         </div>
         <p>Build a clean delivery folder from the current Premiere project, preserve the project bin structure, and review any copy failures in one place.</p>
-        <div class="actions">
-            <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
-            <button id="collectButton" class="button-primary" onclick="collect()">Copy Project Media</button>
-        </div>
     </section>
 
     <section class="grid">
@@ -487,21 +513,37 @@ button:disabled {
         </div>
 
         <div class="card full-width">
-            <h2 class="card-title">Ignore Media On Tracks</h2>
-            <p class="selection-note">Skip copying source media used on selected tracks from one or more chosen sequences. The current active sequence is added by default, and you can switch sequences in Premiere and add more.</p>
-            <div class="tree-toolbar">
-                <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
+            <div class="section-header-row">
+                <h2 class="card-title" style="margin: 0;">Ignore Media On Tracks</h2>
+                <button id="toggleIgnoreButton" class="button-secondary section-toggle" onclick="toggleIgnoreSection()">Show</button>
             </div>
-            <div class="sequence-filter-stack" id="sequenceFilters"></div>
-            <div class="small-note" id="sequenceFilterHint">Switch to another sequence in Premiere, then click Add Current Active Sequence to include its track filters here too.</div>
+            <div id="ignoreSectionContent" style="display: none;">
+                <p class="selection-note" style="margin-top: 14px;">Skip copying source media used on selected tracks from one or more chosen sequences. The current active sequence is added by default, and you can switch sequences in Premiere and add more.</p>
+                <div class="tree-toolbar">
+                    <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
+                </div>
+                <div class="sequence-filter-stack" id="sequenceFilters"></div>
+                <div class="small-note" id="sequenceFilterHint">Switch to another sequence in Premiere, then click Add Current Active Sequence to include its track filters here too.</div>
+            </div>
         </div>
 
         <div class="card">
-            <h2 class="card-title">Destination</h2>
-            <div class="path-box" id="path">No folder selected yet</div>
+            <div class="stack">
+                <div>
+                    <h2 class="card-title">Destination</h2>
+                    <div class="inline-path-row">
+                        <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
+                        <div class="path-box" id="path">No folder selected yet</div>
+                    </div>
+                </div>
 
-            <h2 class="card-title" style="margin-top: 18px;">Progress</h2>
-            <div class="status-box">
+                <div>
+                    <button id="collectButton" class="button-primary" onclick="collect()">Copy Project Media</button>
+                </div>
+
+                <div>
+                    <h2 class="card-title">Progress</h2>
+                    <div class="status-box">
                 <div class="label">Current File</div>
                 <div class="status-line" id="currentFile">Waiting to start</div>
                 <div class="progress-track">
@@ -509,6 +551,8 @@ button:disabled {
                 </div>
                 <div class="meta" id="progressText">0 / 0 files copied</div>
                 <div class="status-line" id="summaryText">Select a destination folder to build the project package.</div>
+                    </div>
+                </div>
             </div>
         </div>
 

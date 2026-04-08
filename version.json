@@ -1,5 +1,5 @@
 {
-  "version": "1.4.1",
+  "version": "1.4.2",
   "channel": "main",
-  "notes": "Release 1.4.1 improves contrast and action button styling in the Project Collector panel."
+  "notes": "Release 1.4.2 moves destination and progress into one workflow block, remembers the destination path, and keeps track ignore collapsed by default."
 }

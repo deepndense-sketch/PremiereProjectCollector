@@ -1,5 +1,5 @@
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
   "channel": "main",
-  "notes": "Release 1.5.1 clarifies Source File List filtering behavior and copies the saved Premiere project file into the collected root folder."
+  "notes": "Release 1.5.2 makes deployment scripts portable so installs and updates work from any project folder location."
 }

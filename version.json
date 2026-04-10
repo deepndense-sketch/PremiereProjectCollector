@@ -1,5 +1,5 @@
 {
-  "version": "1.5.2",
+  "version": "1.5.3",
   "channel": "main",
-  "notes": "Release 1.5.2 makes deployment scripts portable so installs and updates work from any project folder location."
+  "notes": "Release 1.5.3 improves GitHub update detection and avoids stale version checks."
 }

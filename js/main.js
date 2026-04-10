@@ -167,12 +167,18 @@ function setUpdateButton(label, isUpdateAvailable) {
 }
 
 async function checkForUpdates() {
-    const remoteUrl = 'https://raw.githubusercontent.com/deepndense-sketch/PremiereProjectCollector/main/version.json';
+    const remoteUrl = `https://raw.githubusercontent.com/deepndense-sketch/PremiereProjectCollector/main/version.json?ts=${Date.now()}`;
     setUpdateButton(`Version ${localVersion}`, false);
 
     try {
         const remote = await new Promise((resolve, reject) => {
-            https.get(remoteUrl, (response) => {
+            const request = https.get(remoteUrl, {
+                headers: {
+                    'User-Agent': 'PremiereProjectCollector-Updater',
+                    'Cache-Control': 'no-cache',
+                    Pragma: 'no-cache'
+                }
+            }, (response) => {
                 if (response.statusCode !== 200) {
                     reject(new Error(`HTTP ${response.statusCode}`));
                     response.resume();
@@ -191,7 +197,9 @@ async function checkForUpdates() {
                         reject(error);
                     }
                 });
-            }).on('error', reject);
+            });
+
+            request.on('error', reject);
         });
 
         remoteVersion = remote.version || 'unknown';
@@ -201,6 +209,7 @@ async function checkForUpdates() {
             setUpdateButton(`Version ${localVersion}`, false);
         }
     } catch (error) {
+        remoteVersion = null;
         setUpdateButton(`Version ${localVersion}`, false);
     }
 }

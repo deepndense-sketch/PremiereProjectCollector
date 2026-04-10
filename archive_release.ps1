@@ -4,8 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$sourceRoot = "D:\Work\Tools\PremiereProjectCollector"
-$archiveRoot = "D:\Work\Tools\PremiereProjectCollector_Versions"
+$sourceRoot = $PSScriptRoot
+$projectName = Split-Path $sourceRoot -Leaf
+$archiveRoot = Join-Path (Split-Path $sourceRoot -Parent) ($projectName + "_Versions")
 
 if (-not $Version -or -not $Version.Trim()) {
     $versionFile = Join-Path $sourceRoot "version.json"
@@ -58,4 +59,4 @@ $releaseInfo = @{
 
 Set-Content -Path (Join-Path $destination "release-info.json") -Value $releaseInfo -Encoding UTF8
 
-Write-Host "Archived Project Collector version $Version to $destination"
+Write-Host "Archived $projectName version $Version to $destination"

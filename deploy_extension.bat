@@ -1,7 +1,8 @@
 @echo off
 setlocal
 
-set "SRC=D:\Work\Tools\PremiereProjectCollector"
+set "SRC=%~dp0"
+if "%SRC:~-1%"=="\" set "SRC=%SRC:~0,-1%"
 set "DEST=%APPDATA%\Adobe\CEP\extensions\PremiereProjectCollector"
 set "RC=0"
 

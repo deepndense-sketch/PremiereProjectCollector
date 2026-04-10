@@ -1,5 +1,5 @@
 {
-  "version": "1.5.3",
+  "version": "1.5.4",
   "channel": "main",
-  "notes": "Release 1.5.3 improves GitHub update detection and avoids stale version checks."
+  "notes": "Release 1.5.4 makes the available-update button display as blue with white text."
 }

@@ -154,11 +154,16 @@ button:disabled {
     border: 1px solid rgba(66, 165, 255, 0.22);
 }
 
-.button-update-ready {
+#updateButton.button-update-ready {
     background: linear-gradient(135deg, #56a7ff, #2d73ff);
-    color: #f7fbff;
+    color: #ffffff;
     box-shadow: 0 10px 24px rgba(45, 115, 255, 0.28);
     border: 0;
+}
+
+#updateButton.button-update-ready:hover:not(:disabled) {
+    background: linear-gradient(135deg, #68b2ff, #3d80ff);
+    color: #ffffff;
 }
 
 .button-secondary {

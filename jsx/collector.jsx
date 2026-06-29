@@ -173,6 +173,7 @@ function pcTrackUsageJson(items) {
             '"trackNumber":' + entry.trackNumber + ',' +
             '"label":"' + pcJsonEscape(entry.label) + '",' +
             '"clipCount":' + entry.clipCount + ',' +
+            '"hasItems":' + (entry.hasItems ? 'true' : 'false') + ',' +
             '"mediaPaths":' + pcStringsJson(entry.mediaPaths) +
             '}'
         );
@@ -192,6 +193,7 @@ function pcTrackCollectionUsage(tracks, prefix) {
         var mediaMap = {};
         var mediaPaths = [];
         var clipCount = 0;
+        var hasItems = false;
         var track = tracks[i];
         var clips = null;
         var j;
@@ -207,6 +209,9 @@ function pcTrackCollectionUsage(tracks, prefix) {
                 var clip = clips[j];
                 var projectItem = null;
                 var mediaPath = '';
+
+                hasItems = true;
+                clipCount += 1;
 
                 try {
                     projectItem = clip.projectItem;
@@ -228,8 +233,6 @@ function pcTrackCollectionUsage(tracks, prefix) {
                     continue;
                 }
 
-                clipCount += 1;
-
                 if (!mediaMap[mediaPath]) {
                     mediaMap[mediaPath] = true;
                     mediaPaths.push(mediaPath);
@@ -241,6 +244,7 @@ function pcTrackCollectionUsage(tracks, prefix) {
             trackNumber: i + 1,
             label: prefix + (i + 1),
             clipCount: clipCount,
+            hasItems: hasItems,
             mediaPaths: mediaPaths
         });
     }
@@ -471,6 +475,159 @@ function pcCollectSequenceMedia(sequence, filterMap, sequenceMaps, visitedMap, m
     collectTrackMedia(sequence.audioTracks, false);
 }
 
+function pcAddMediaPath(mediaMap, mediaPaths, mediaPath) {
+    if (!mediaPath || mediaPath === '') {
+        return;
+    }
+
+    if (!mediaMap[mediaPath]) {
+        mediaMap[mediaPath] = true;
+        mediaPaths.push(mediaPath);
+    }
+}
+
+function pcCollectProjectItemMedia(projectItem, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths) {
+    if (!projectItem) {
+        return;
+    }
+
+    var nestedSequence = null;
+    var isSequenceItem = false;
+    var mediaPath = '';
+
+    try {
+        isSequenceItem = projectItem.isSequence();
+    } catch (e) {
+        isSequenceItem = false;
+    }
+
+    if (isSequenceItem) {
+        nestedSequence = pcFindSequenceByProjectItem(projectItem, sequenceMaps);
+        if (nestedSequence) {
+            pcCollectAllSequenceMedia(nestedSequence, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths);
+        }
+        return;
+    }
+
+    if (!projectItem.getMediaPath) {
+        return;
+    }
+
+    try {
+        mediaPath = projectItem.getMediaPath();
+    } catch (e2) {
+        mediaPath = '';
+    }
+
+    pcAddMediaPath(mediaMap, mediaPaths, mediaPath);
+}
+
+function pcCollectAllSequenceMedia(sequence, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths) {
+    if (!sequence) {
+        return;
+    }
+
+    var sequenceID = '';
+    try {
+        sequenceID = sequence.sequenceID || '';
+    } catch (e) {}
+
+    if (sequenceID && visitedSequenceMap[sequenceID]) {
+        return;
+    }
+
+    if (sequenceID) {
+        visitedSequenceMap[sequenceID] = true;
+    }
+
+    function collectTracks(tracks) {
+        var i;
+        if (!tracks || tracks.numTracks === undefined) {
+            return;
+        }
+
+        for (i = 0; i < tracks.numTracks; i++) {
+            var track = tracks[i];
+            var clips = null;
+            var j;
+
+            try {
+                clips = track.clips;
+            } catch (e2) {
+                clips = null;
+            }
+
+            if (!clips || clips.numItems === undefined) {
+                continue;
+            }
+
+            for (j = 0; j < clips.numItems; j++) {
+                var projectItem = null;
+
+                try {
+                    projectItem = clips[j].projectItem;
+                } catch (e3) {
+                    projectItem = null;
+                }
+
+                pcCollectProjectItemMedia(projectItem, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths);
+            }
+        }
+    }
+
+    collectTracks(sequence.videoTracks);
+    collectTracks(sequence.audioTracks);
+}
+
+function pcCollectIgnoredTrackMedia(sequence, filter, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths) {
+    if (!sequence || !filter) {
+        return;
+    }
+
+    function collectSelectedTracks(tracks, ignoredTracks) {
+        var i;
+        if (!tracks || tracks.numTracks === undefined) {
+            return;
+        }
+
+        for (i = 0; i < tracks.numTracks; i++) {
+            var trackNumber = i + 1;
+            var track = tracks[i];
+            var clips = null;
+            var j;
+
+            if (!pcArrayContainsInt(ignoredTracks, trackNumber)) {
+                continue;
+            }
+
+            try {
+                clips = track.clips;
+            } catch (e) {
+                clips = null;
+            }
+
+            if (!clips || clips.numItems === undefined) {
+                continue;
+            }
+
+            for (j = 0; j < clips.numItems; j++) {
+                var projectItem = null;
+
+                try {
+                    projectItem = clips[j].projectItem;
+                } catch (e2) {
+                    projectItem = null;
+                }
+
+                pcCollectProjectItemMedia(projectItem, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths);
+            }
+        }
+    }
+
+    collectSelectedTracks(sequence.videoTracks, filter.ignoredVideoTracks || []);
+    collectSelectedTracks(sequence.audioTracks, filter.ignoredAudioTracks || []);
+}
+
 function pcBuildSequenceScopedPlan(filters) {
     var sequenceMaps = pcBuildSequenceMap();
     var filterMap = pcBuildFilterMap(filters);
@@ -507,6 +664,37 @@ function pcBuildSequenceScopedPlan(filters) {
         includedSequences: includedSequences,
         missingSequences: missingSequences,
         selectedSequenceIDs: selectedSequenceIDs
+    };
+}
+
+function pcBuildIgnoredTrackMediaPlan(filters) {
+    var sequenceMaps = pcBuildSequenceMap();
+    var mediaMap = {};
+    var mediaPaths = [];
+    var visitedSequenceMap = {};
+    var missingSequences = [];
+    var i;
+
+    for (i = 0; i < filters.length; i++) {
+        var filter = filters[i];
+        var sequence = null;
+
+        if (!filter || !filter.sequenceID) {
+            continue;
+        }
+
+        sequence = sequenceMaps.bySequenceID[filter.sequenceID];
+        if (!sequence) {
+            missingSequences.push(filter.sequenceName || filter.sequenceID);
+            continue;
+        }
+
+        pcCollectIgnoredTrackMedia(sequence, filter, sequenceMaps, visitedSequenceMap, mediaMap, mediaPaths);
+    }
+
+    return {
+        mediaPaths: mediaPaths,
+        missingSequences: missingSequences
     };
 }
 
@@ -626,6 +814,20 @@ function getSequenceScopedMediaPlan(filtersJson) {
     }
 }
 
+function getIgnoredTrackMediaPlan(filtersJson) {
+    try {
+        var filters = pcParseJsonArray(filtersJson);
+        var plan = pcBuildIgnoredTrackMediaPlan(filters);
+
+        return '{' +
+            '"mediaPaths":' + pcStringsJson(plan.mediaPaths) + ',' +
+            '"missingSequences":' + pcStringsJson(plan.missingSequences) +
+            '}';
+    } catch (e) {
+        return pcJsonError(e.toString());
+    }
+}
+
 function createReducedProjectFromSequenceSelection(destinationFolder, sequenceIDsJson) {
     try {
         if (!app || !app.project) {
@@ -688,6 +890,123 @@ function saveCurrentProjectAndGetPath() {
             '"projectPath":"' + pcJsonEscape(projectPath) + '"' +
             '}';
     } catch (e) {
+        return pcJsonError(e.toString());
+    }
+}
+
+function pcNormalizeRelinkPath(pathValue) {
+    return String(pathValue || '').split('\\').join('/').toLowerCase();
+}
+
+function pcBuildRelinkMap(tasks) {
+    var map = {};
+    var i;
+
+    for (i = 0; i < tasks.length; i++) {
+        var task = tasks[i];
+        if (!task || !task.source || !task.destination) {
+            continue;
+        }
+
+        map[pcNormalizeRelinkPath(task.source)] = task.destination;
+    }
+
+    return map;
+}
+
+function pcRelinkProjectItems(item, relinkMap, result) {
+    if (!item || !item.children || item.children.numItems === undefined) {
+        return;
+    }
+
+    var i;
+    for (i = 0; i < item.children.numItems; i++) {
+        var child = item.children[i];
+
+        if (pcIsBin(child)) {
+            pcRelinkProjectItems(child, relinkMap, result);
+            continue;
+        }
+
+        if (!child || !child.getMediaPath) {
+            continue;
+        }
+
+        var currentPath = '';
+        var newPath = '';
+
+        try {
+            currentPath = child.getMediaPath();
+        } catch (e) {
+            currentPath = '';
+        }
+
+        newPath = relinkMap[pcNormalizeRelinkPath(currentPath)] || '';
+        if (!newPath) {
+            continue;
+        }
+
+        try {
+            var changeResult = child.changeMediaPath(newPath, true);
+            if (changeResult === false) {
+                result.failed.push((child.name || currentPath) + ' | changeMediaPath returned false');
+            } else {
+                result.linkedCount += 1;
+            }
+        } catch (e2) {
+            result.failed.push((child.name || currentPath) + ' | ' + e2.toString());
+        }
+    }
+}
+
+function linkProjectCopyToCollectedMedia(projectCopyPath, tasksJson) {
+    var originalProjectPath = '';
+
+    try {
+        if (!app || !app.project) {
+            throw new Error('No Premiere project is currently open.');
+        }
+
+        originalProjectPath = app.project.path || '';
+        if (!projectCopyPath || projectCopyPath === '') {
+            throw new Error('Copied project path was not provided.');
+        }
+
+        var tasks = pcParseJsonArray(tasksJson);
+        var relinkMap = pcBuildRelinkMap(tasks);
+        var openResult = app.openDocument(projectCopyPath, true, true, true, true);
+        var result = {
+            linkedCount: 0,
+            failed: []
+        };
+        var openedProjectPath = app.project.path || '';
+
+        if (pcNormalizeRelinkPath(openedProjectPath) !== pcNormalizeRelinkPath(projectCopyPath)) {
+            throw new Error('Premiere did not open the copied project for relinking.');
+        }
+
+        pcRelinkProjectItems(app.project.rootItem, relinkMap, result);
+        app.project.save();
+
+        if (originalProjectPath && pcNormalizeRelinkPath(originalProjectPath) !== pcNormalizeRelinkPath(projectCopyPath)) {
+            try {
+                app.openDocument(originalProjectPath, true, true, true, true);
+            } catch (e2) {}
+        }
+
+        return '{' +
+            '"success":true,' +
+            '"opened":"' + pcJsonEscape(openResult) + '",' +
+            '"linkedCount":' + result.linkedCount + ',' +
+            '"failed":' + pcStringsJson(result.failed) +
+            '}';
+    } catch (e) {
+        if (originalProjectPath && pcNormalizeRelinkPath(originalProjectPath) !== pcNormalizeRelinkPath(projectCopyPath)) {
+            try {
+                app.openDocument(originalProjectPath, true, true, true, true);
+            } catch (e2) {}
+        }
+
         return pcJsonError(e.toString());
     }
 }

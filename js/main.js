@@ -18,12 +18,22 @@ let remoteVersion = null;
 let selectedSequenceFilters = [];
 let sequenceOnlyMode = false;
 let createReducedProject = false;
+let copyProjectFile = true;
+let linkProjectAfterCollection = false;
+let includedProjectFolders = [];
+let ignoredProjectFolders = [];
+let trackRangeAnchor = null;
+let folderRangeAnchor = null;
+let trackClickTimer = null;
+let folderClickTimer = null;
 
 const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
 const DESTINATION_STORAGE_KEY = 'projectcollector.destination';
 const IGNORE_SECTION_VISIBLE_STORAGE_KEY = 'projectcollector.ignoreSectionVisible';
 const SEQUENCE_ONLY_MODE_STORAGE_KEY = 'projectcollector.sequenceOnlyMode';
 const CREATE_REDUCED_PROJECT_STORAGE_KEY = 'projectcollector.createReducedProject';
+const COPY_PROJECT_FILE_STORAGE_KEY = 'projectcollector.copyProjectFile';
+const LINK_PROJECT_AFTER_COLLECTION_STORAGE_KEY = 'projectcollector.linkProjectAfterCollection';
 
 function setText(id, value) {
     document.getElementById(id).textContent = value;
@@ -45,6 +55,23 @@ function toggleIgnoreSection() {
     setIgnoreSectionVisibility(content.style.display === 'none');
 }
 
+function setProjectFolderSectionVisibility(visible) {
+    const content = document.getElementById('projectFolderSectionContent');
+    const button = document.getElementById('toggleProjectFoldersButton');
+
+    if (!content || !button) {
+        return;
+    }
+
+    content.style.display = visible ? 'block' : 'none';
+    button.textContent = visible ? 'Hide' : 'Show';
+}
+
+function toggleProjectFolderSection() {
+    const content = document.getElementById('projectFolderSectionContent');
+    setProjectFolderSectionVisibility(content && content.style.display === 'none');
+}
+
 function syncSequenceModeUI() {
     const sequenceOnlyCheckbox = document.getElementById('sequenceOnlyMode');
     const reducedProjectCheckbox = document.getElementById('createReducedProject');
@@ -56,6 +83,20 @@ function syncSequenceModeUI() {
     if (reducedProjectCheckbox) {
         reducedProjectCheckbox.checked = createReducedProject;
         reducedProjectCheckbox.disabled = !sequenceOnlyMode;
+    }
+}
+
+function syncProjectOptionUI() {
+    const copyProjectCheckbox = document.getElementById('copyProjectFile');
+    const linkProjectCheckbox = document.getElementById('linkProjectAfterCollection');
+
+    if (copyProjectCheckbox) {
+        copyProjectCheckbox.checked = copyProjectFile;
+    }
+
+    if (linkProjectCheckbox) {
+        linkProjectCheckbox.checked = linkProjectAfterCollection && copyProjectFile;
+        linkProjectCheckbox.disabled = !copyProjectFile;
     }
 }
 
@@ -82,6 +123,30 @@ function toggleCreateReducedProject() {
     } catch (error) {}
 
     syncSequenceModeUI();
+}
+
+function toggleCopyProjectFile() {
+    copyProjectFile = !!document.getElementById('copyProjectFile').checked;
+    if (!copyProjectFile) {
+        linkProjectAfterCollection = false;
+    }
+
+    try {
+        localStorage.setItem(COPY_PROJECT_FILE_STORAGE_KEY, copyProjectFile ? '1' : '0');
+        localStorage.setItem(LINK_PROJECT_AFTER_COLLECTION_STORAGE_KEY, linkProjectAfterCollection ? '1' : '0');
+    } catch (error) {}
+
+    syncProjectOptionUI();
+}
+
+function toggleLinkProjectAfterCollection() {
+    linkProjectAfterCollection = copyProjectFile && !!document.getElementById('linkProjectAfterCollection').checked;
+
+    try {
+        localStorage.setItem(LINK_PROJECT_AFTER_COLLECTION_STORAGE_KEY, linkProjectAfterCollection ? '1' : '0');
+    } catch (error) {}
+
+    syncProjectOptionUI();
 }
 
 function getExtensionRootPath() {
@@ -387,13 +452,37 @@ function buildSequenceFiltersPayload() {
     }));
 }
 
-async function copyProjectFileIntoCollectedRoot(rootPath, projectPath) {
+function sanitizeFileName(name, fallback) {
+    const cleaned = String(name || fallback || 'Untitled')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/^\s+/, '')
+        .replace(/\s+$/, '');
+    return cleaned || fallback || 'Untitled';
+}
+
+function getCollectedProjectFileName(projectPath) {
+    const extension = path.extname(projectPath || '') || '.prproj';
+    const sequenceNames = sequenceOnlyMode
+        ? selectedSequenceFilters
+            .filter((filter) => filter && filter.sequenceName)
+            .map((filter) => filter.sequenceName)
+        : [];
+    const baseName = sequenceNames.length === 1
+        ? sequenceNames[0]
+        : (latestPlan && latestPlan.projectName ? latestPlan.projectName : path.basename(projectPath || 'Premiere_Project', extension));
+
+    return `${sanitizeFileName(`${baseName} BACKUP`, 'Premiere_Project BACKUP')}${extension}`;
+}
+
+async function copyProjectFileIntoCollectedRoot(rootPath, projectPath, destinationName) {
     if (!rootPath || !projectPath) {
         return { success: false, message: 'Project path was not available.' };
     }
 
-    const destinationPath = path.join(rootPath, path.basename(projectPath));
-    return copyFileWithRobocopy(projectPath, destinationPath);
+    const destinationPath = path.join(rootPath, sanitizeFileName(destinationName || path.basename(projectPath), path.basename(projectPath)));
+    const result = await copyFileWithRobocopy(projectPath, destinationPath);
+    result.destinationPath = destinationPath;
+    return result;
 }
 
 function callHost(script) {
@@ -472,7 +561,7 @@ function createTreeNode(key, name, type, fullPath) {
         fullPath,
         selected: true,
         explicit: false,
-        expanded: type !== 'file',
+        expanded: false,
         children: []
     };
 }
@@ -614,9 +703,17 @@ function updateSelectionSummary() {
         modeSummary.push(ignoredTrackSummary.join(' || '));
     }
 
+    if (includedProjectFolders.length) {
+        modeSummary.push(`force-copy Premiere folders: ${includedProjectFolders.join(', ')}`);
+    }
+
+    if (ignoredProjectFolders.length) {
+        modeSummary.push(`ignored Premiere folders: ${ignoredProjectFolders.join(', ')}`);
+    }
+
     const suffix = modeSummary.length ? ` (${modeSummary.join(' || ')})` : '';
-    const treeScopeNote = (sequenceOnlyMode || ignoredTrackSummary.length)
-        ? ' Source File List still shows the full project tree; final copy is reduced later by sequence mode and ignored tracks.'
+    const treeScopeNote = (sequenceOnlyMode || ignoredTrackSummary.length || includedProjectFolders.length || ignoredProjectFolders.length)
+        ? ' Source File List still shows the full project tree; final copy is adjusted later by sequence mode, track choices, and Premiere folder rules.'
         : '';
 
     if (!selectionTouched) {
@@ -661,6 +758,139 @@ function getSelectedTasks() {
     return latestPlan.tasks.filter((task, index) => selectedIndexes.has(index));
 }
 
+function normalizeProjectFolderPath(folderPath) {
+    return String(folderPath || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
+}
+
+function isRootProjectFolderPath(folderPath) {
+    const normalized = normalizeProjectFolderPath(folderPath);
+    return !!normalized && normalized.indexOf('/') === -1;
+}
+
+function isTaskInsideProjectFolder(task, folderPath) {
+    const taskFolder = normalizeProjectFolderPath(task && task.binPath);
+    const ignoredFolder = normalizeProjectFolderPath(folderPath);
+
+    if (!ignoredFolder) {
+        return false;
+    }
+
+    return taskFolder === ignoredFolder || taskFolder.indexOf(`${ignoredFolder}/`) === 0;
+}
+
+function isTaskInsideIgnoredProjectFolder(task) {
+    return ignoredProjectFolders.some((folderPath) => isTaskInsideProjectFolder(task, folderPath));
+}
+
+function isTaskInsideIncludedProjectFolder(task) {
+    return includedProjectFolders.some((folderPath) => isTaskInsideProjectFolder(task, folderPath));
+}
+
+function splitRelativeDestination(relativePath) {
+    const normalized = String(relativePath || '').replace(/\\/g, '/');
+    const slashIndex = normalized.lastIndexOf('/');
+
+    if (slashIndex === -1) {
+        return {
+            folder: '',
+            fileName: normalized
+        };
+    }
+
+    return {
+        folder: normalized.slice(0, slashIndex),
+        fileName: normalized.slice(slashIndex + 1)
+    };
+}
+
+function makeUniqueRelativeDestination(relativePath, usedDestinations) {
+    const parsed = splitRelativeDestination(relativePath);
+    const extension = path.extname(parsed.fileName);
+    const baseName = parsed.fileName.slice(0, parsed.fileName.length - extension.length) || 'Media';
+    let candidate = `${parsed.folder ? `${parsed.folder}/` : ''}${parsed.fileName}`;
+    let key = candidate.toLowerCase();
+    let suffix = 123;
+
+    while (usedDestinations.has(key)) {
+        const nextFileName = `${baseName}_${suffix}${extension}`;
+        candidate = `${parsed.folder ? `${parsed.folder}/` : ''}${nextFileName}`;
+        key = candidate.toLowerCase();
+        suffix += 1;
+    }
+
+    usedDestinations.add(key);
+    return candidate;
+}
+
+function getRootProjectFolderNames() {
+    const folders = latestPlan && Array.isArray(latestPlan.folders) ? latestPlan.folders : [];
+    return new Set(folders
+        .map(normalizeProjectFolderPath)
+        .filter(isRootProjectFolderPath)
+        .map((folderPath) => folderPath.toLowerCase()));
+}
+
+function chooseLooseMediaFolderName(rootPath) {
+    const existingProjectFolders = getRootProjectFolderNames();
+    const baseName = 'CollectedMedias';
+
+    function isAvailable(name) {
+        if (existingProjectFolders.has(name.toLowerCase())) {
+            return false;
+        }
+
+        try {
+            return !rootPath || !fs.existsSync(path.join(rootPath, name));
+        } catch (error) {
+            return true;
+        }
+    }
+
+    if (isAvailable(baseName)) {
+        return baseName;
+    }
+
+    for (let suffix = 123; suffix < 1000; suffix += 1) {
+        const candidate = `${baseName}_${suffix}`;
+        if (isAvailable(candidate)) {
+            return candidate;
+        }
+    }
+
+    return `${baseName}_${Date.now()}`;
+}
+
+function getRootLooseFileName(task) {
+    const destinationFile = splitRelativeDestination(task.destination || '').fileName;
+    if (destinationFile) {
+        return destinationFile;
+    }
+
+    return sanitizeFileName(path.basename(task.source || task.name || 'Media'), 'Media');
+}
+
+function buildCollectedTasks(tasks, rootPath) {
+    const looseMediaFolderName = chooseLooseMediaFolderName(rootPath);
+    const usedDestinations = new Set();
+
+    return tasks.map((task) => {
+        const nextTask = Object.assign({}, task);
+        const taskFolder = normalizeProjectFolderPath(task.binPath);
+
+        if (!taskFolder) {
+            nextTask.destination = `${looseMediaFolderName}/${getRootLooseFileName(task)}`;
+            nextTask.binPath = looseMediaFolderName;
+        }
+
+        nextTask.destination = makeUniqueRelativeDestination(nextTask.destination, usedDestinations);
+        nextTask.relativePath = nextTask.destination;
+        return nextTask;
+    });
+}
+
 function normalizeMediaKey(filePath) {
     return tryResolveWindowsPath(filePath).toLowerCase();
 }
@@ -671,7 +901,8 @@ function sanitizeTrackUsageEntries(entries, prefix) {
             trackNumber: parseInt(entry.trackNumber, 10) || 0,
             label: entry.label || `${prefix}${entry.trackNumber}`,
             clipCount: parseInt(entry.clipCount, 10) || 0,
-            mediaPaths: Array.isArray(entry.mediaPaths) ? entry.mediaPaths.slice() : []
+            mediaPaths: Array.isArray(entry.mediaPaths) ? entry.mediaPaths.slice() : [],
+            hasItems: !!entry.hasItems || (parseInt(entry.clipCount, 10) || 0) > 0 || (Array.isArray(entry.mediaPaths) && entry.mediaPaths.length > 0)
         })).filter((entry) => entry.trackNumber > 0)
         : [];
 }
@@ -755,8 +986,6 @@ function loadSequenceFilters() {
             selectedSequenceFilters.splice(defaultIndex, 1);
             selectedSequenceFilters.unshift(existing);
         }
-    } else {
-        selectedSequenceFilters.unshift(defaultFilter);
     }
 
     selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
@@ -770,43 +999,158 @@ function saveSequenceFilters() {
     } catch (error) {}
 }
 
-function getSequenceFilter(sequenceName) {
-    return selectedSequenceFilters.find((filter) => filter.sequenceName === sequenceName) || null;
-}
-
 function getSequenceFilterByKey(sequenceKey) {
     return selectedSequenceFilters.find((filter) => (filter.sequenceID || filter.sequenceName) === sequenceKey) || null;
 }
 
-function buildTrackOptions(filter, kind) {
-    const entries = kind === 'video' ? filter.videoTrackUsage : filter.audioTrackUsage;
-    const ignored = kind === 'video' ? filter.ignoredVideoTracks : filter.ignoredAudioTracks;
-    return entries.filter((entry) => ignored.indexOf(entry.trackNumber) === -1);
+function getSequenceFilterKey(filter) {
+    return filter.sequenceID || filter.sequenceName;
 }
 
-function renderTrackChipList(container, kind, filter) {
-    const ignored = kind === 'video' ? filter.ignoredVideoTracks : filter.ignoredAudioTracks;
+function getVisibleTrackEntries(filter, kind) {
+    const entries = kind === 'video' ? filter.videoTrackUsage : filter.audioTrackUsage;
+    return entries
+        .filter((entry) => entry.hasItems || entry.clipCount > 0 || (entry.mediaPaths || []).length > 0)
+        .sort((left, right) => left.trackNumber - right.trackNumber);
+}
 
-    if (!ignored.length) {
-        const empty = document.createElement('div');
-        empty.className = 'small-note';
-        empty.textContent = kind === 'video' ? 'No ignored video tracks.' : 'No ignored audio tracks.';
-        container.appendChild(empty);
+function getIgnoredTrackList(filter, kind) {
+    return kind === 'video' ? filter.ignoredVideoTracks : filter.ignoredAudioTracks;
+}
+
+function setIgnoredTrackList(filter, kind, values) {
+    const uniqueValues = Array.from(new Set(values.map((value) => parseInt(value, 10) || 0).filter((value) => value > 0))).sort((a, b) => a - b);
+
+    if (kind === 'video') {
+        filter.ignoredVideoTracks = uniqueValues;
+    } else {
+        filter.ignoredAudioTracks = uniqueValues;
+    }
+}
+
+function isTrackIgnored(filter, kind, trackNumber) {
+    return getIgnoredTrackList(filter, kind).indexOf(trackNumber) !== -1;
+}
+
+function saveAndRenderTrackFilters() {
+    saveSequenceFilters();
+    renderSequenceFilters();
+}
+
+function toggleIgnoredTrack(sequenceKey, kind, trackNumber) {
+    const filter = getSequenceFilterByKey(sequenceKey);
+    if (!filter || !trackNumber) {
         return;
     }
 
-    ignored.forEach((trackNumber) => {
-        const chip = document.createElement('div');
-        chip.className = 'chip';
-        chip.textContent = `${kind === 'video' ? 'Ignore Video Medias on Layer V' : 'Ignore Audio Medias on Layer A'}${trackNumber}`;
+    const ignored = getIgnoredTrackList(filter, kind).slice();
+    const existingIndex = ignored.indexOf(trackNumber);
+    trackRangeAnchor = null;
 
-        const removeButton = document.createElement('button');
-        removeButton.type = 'button';
-        removeButton.textContent = 'x';
-        removeButton.onclick = () => removeIgnoredTrack(filter.sequenceName, kind, trackNumber);
-        chip.appendChild(removeButton);
-        container.appendChild(chip);
+    if (existingIndex === -1) {
+        ignored.push(trackNumber);
+    } else {
+        ignored.splice(existingIndex, 1);
+    }
+
+    setIgnoredTrackList(filter, kind, ignored);
+    saveAndRenderTrackFilters();
+}
+
+function ignoreTrackRange(anchor, filter, kind, trackNumber) {
+    if (!anchor || anchor.sequenceKey !== getSequenceFilterKey(filter) || anchor.kind !== kind) {
+        trackRangeAnchor = {
+            sequenceKey: getSequenceFilterKey(filter),
+            kind,
+            trackNumber
+        };
+        renderSequenceFilters();
+        return;
+    }
+
+    const ignored = getIgnoredTrackList(filter, kind).slice();
+    const start = Math.min(anchor.trackNumber, trackNumber);
+    const end = Math.max(anchor.trackNumber, trackNumber);
+
+    for (let current = start; current <= end; current += 1) {
+        if (ignored.indexOf(current) === -1) {
+            ignored.push(current);
+        }
+    }
+
+    trackRangeAnchor = null;
+    setIgnoredTrackList(filter, kind, ignored);
+    saveAndRenderTrackFilters();
+}
+
+function handleTrackButtonClick(filter, kind, trackNumber) {
+    if (trackClickTimer) {
+        clearTimeout(trackClickTimer);
+    }
+
+    trackClickTimer = setTimeout(() => {
+        toggleIgnoredTrack(getSequenceFilterKey(filter), kind, trackNumber);
+        trackClickTimer = null;
+    }, 220);
+}
+
+function handleTrackButtonDoubleClick(filter, kind, trackNumber) {
+    if (trackClickTimer) {
+        clearTimeout(trackClickTimer);
+        trackClickTimer = null;
+    }
+
+    ignoreTrackRange(trackRangeAnchor, filter, kind, trackNumber);
+}
+
+function renderTrackButtonGroup(filter, kind) {
+    const entries = getVisibleTrackEntries(filter, kind);
+    const list = document.createElement('div');
+    list.className = 'choice-grid';
+
+    if (!entries.length) {
+        const empty = document.createElement('div');
+        empty.className = 'small-note';
+        empty.textContent = kind === 'video' ? 'No video tracks with clips.' : 'No audio tracks with clips.';
+        list.appendChild(empty);
+        return list;
+    }
+
+    entries.forEach((entry) => {
+        const item = document.createElement('div');
+        const button = document.createElement('button');
+        const sequenceKey = getSequenceFilterKey(filter);
+        const isAnchor = trackRangeAnchor
+            && trackRangeAnchor.sequenceKey === sequenceKey
+            && trackRangeAnchor.kind === kind
+            && trackRangeAnchor.trackNumber === entry.trackNumber;
+        const ignored = isTrackIgnored(filter, kind, entry.trackNumber);
+
+        item.className = 'choice-item';
+        button.type = 'button';
+        button.className = `choice-button${ignored ? ' is-ignored' : ''}${isAnchor ? ' is-range-anchor' : ''}`;
+        button.onclick = (event) => {
+            if (event.detail === 1) {
+                handleTrackButtonClick(filter, kind, entry.trackNumber);
+            }
+        };
+        button.ondblclick = () => handleTrackButtonDoubleClick(filter, kind, entry.trackNumber);
+
+        const title = document.createElement('span');
+        title.className = 'choice-title';
+        title.textContent = `${kind === 'video' ? 'V' : 'A'}${entry.trackNumber}`;
+        button.appendChild(title);
+
+        const meta = document.createElement('span');
+        meta.className = 'choice-meta';
+        meta.textContent = `${entry.clipCount} ${entry.clipCount === 1 ? 'clip' : 'clips'}`;
+        item.appendChild(button);
+        item.appendChild(meta);
+
+        list.appendChild(item);
     });
+
+    return list;
 }
 
 function renderSequenceGroup(filter, kind) {
@@ -815,58 +1159,10 @@ function renderSequenceGroup(filter, kind) {
 
     const title = document.createElement('div');
     title.className = 'label';
-    title.textContent = kind === 'video' ? 'Ignore Video Medias On Layers' : 'Ignore Audio Medias On Layers';
+    title.textContent = kind === 'video' ? 'Video Tracks' : 'Audio Tracks';
     group.appendChild(title);
 
-    const row = document.createElement('div');
-    row.className = 'filter-row';
-
-    const select = document.createElement('select');
-    const options = buildTrackOptions(filter, kind);
-
-    if (!options.length) {
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = kind === 'video' ? 'No video tracks left' : 'No audio tracks left';
-        select.appendChild(option);
-        select.disabled = true;
-    } else {
-        options.forEach((entry) => {
-            const option = document.createElement('option');
-            option.value = String(entry.trackNumber);
-            option.textContent = `${entry.label} (${entry.clipCount} clips)`;
-            select.appendChild(option);
-        });
-    }
-
-    row.appendChild(select);
-
-    const note = document.createElement('div');
-    note.className = 'small-note';
-    note.textContent = kind === 'video'
-        ? 'Choose a video layer to ignore for this sequence.'
-        : 'Choose an audio layer to ignore for this sequence.';
-    row.appendChild(note);
-
-    const addButton = document.createElement('button');
-    addButton.type = 'button';
-    addButton.className = 'button-accent button-small';
-    addButton.textContent = kind === 'video' ? 'Add V' : 'Add A';
-    addButton.disabled = !options.length;
-    addButton.onclick = () => {
-        const trackNumber = parseInt(select.value, 10) || 0;
-        if (trackNumber) {
-            addIgnoredTrack(filter.sequenceID || filter.sequenceName, kind, trackNumber);
-        }
-    };
-    row.appendChild(addButton);
-
-    group.appendChild(row);
-
-    const chips = document.createElement('div');
-    chips.className = 'chip-list';
-    renderTrackChipList(chips, kind, filter);
-    group.appendChild(chips);
+    group.appendChild(renderTrackButtonGroup(filter, kind));
 
     return group;
 }
@@ -902,7 +1198,7 @@ function renderSequenceFilters() {
         const subtitle = document.createElement('div');
         subtitle.className = 'sequence-subtitle';
         subtitle.textContent = filter.locked
-            ? 'Current active sequence by default. This one stays unless you refresh the active sequence.'
+            ? 'Current active sequence loaded by default. Use Refresh Tracks after changing it in Premiere.'
             : 'Added from another active sequence. Remove it anytime if you no longer want its track filters.';
         titleWrap.appendChild(subtitle);
         header.appendChild(titleWrap);
@@ -927,8 +1223,27 @@ function renderSequenceFilters() {
         container.appendChild(card);
     });
 
-    hint.textContent = 'Switch to another sequence in Premiere, then click Add Current Active Sequence to include it too. Opening the same sequence again refreshes it instead of duplicating it.';
+    hint.textContent = 'Nested sequence media is collected correctly even when a visible track count only reflects direct clips. Refresh updates track counts and keeps your green/faded choices.';
     updateSelectionSummary();
+}
+
+async function readCurrentActiveSequenceFilter(locked) {
+    const raw = await callHost('getActiveSequenceTrackUsage()');
+    const data = safeJsonParse(raw);
+
+    if (!data || data.error || !data.sequenceName) {
+        alert(data && data.error ? data.error : 'No active sequence is available in Premiere.');
+        return null;
+    }
+
+    return createSequenceFilter(data.sequenceID || '', data.sequenceName, data.videoTrackUsage || [], data.audioTrackUsage || [], locked);
+}
+
+function mergeSequenceTrackUsage(existing, incoming) {
+    existing.videoTrackUsage = incoming.videoTrackUsage;
+    existing.audioTrackUsage = incoming.audioTrackUsage;
+    existing.sequenceID = incoming.sequenceID || existing.sequenceID;
+    existing.sequenceName = incoming.sequenceName || existing.sequenceName;
 }
 
 async function addCurrentActiveSequence() {
@@ -940,21 +1255,16 @@ async function addCurrentActiveSequence() {
         return;
     }
 
-    const raw = await callHost('getActiveSequenceTrackUsage()');
-    const data = safeJsonParse(raw);
-
-    if (!data || data.error || !data.sequenceName) {
-        alert(data && data.error ? data.error : 'No active sequence is available in Premiere.');
+    const incoming = await readCurrentActiveSequenceFilter(false);
+    if (!incoming) {
         return;
     }
 
-    const incoming = createSequenceFilter(data.sequenceID || '', data.sequenceName, data.videoTrackUsage || [], data.audioTrackUsage || [], false);
     const existingIndex = selectedSequenceFilters.findIndex((filter) => (filter.sequenceID && filter.sequenceID === incoming.sequenceID) || filter.sequenceName === incoming.sequenceName);
 
     if (existingIndex >= 0) {
         const existing = selectedSequenceFilters[existingIndex];
-        existing.videoTrackUsage = incoming.videoTrackUsage;
-        existing.audioTrackUsage = incoming.audioTrackUsage;
+        mergeSequenceTrackUsage(existing, incoming);
         if (existingIndex === 0) {
             existing.locked = true;
         }
@@ -967,38 +1277,44 @@ async function addCurrentActiveSequence() {
     renderSequenceFilters();
 }
 
-function removeSequenceFilter(sequenceKey) {
-    selectedSequenceFilters = selectedSequenceFilters.filter((filter, index) => index === 0 || (filter.sequenceID || filter.sequenceName) !== sequenceKey);
+async function refreshTrackSelection() {
+    if (isCopying) {
+        return;
+    }
+
+    if (!(await ensureHostScriptLoaded())) {
+        return;
+    }
+
+    const incoming = await readCurrentActiveSequenceFilter(false);
+    if (!incoming) {
+        return;
+    }
+
+    const existingIndex = selectedSequenceFilters.findIndex((filter) => (filter.sequenceID && filter.sequenceID === incoming.sequenceID) || filter.sequenceName === incoming.sequenceName);
+    if (existingIndex === -1) {
+        alert('This active sequence is not in the track list yet. Click Add Current Active Sequence first.');
+        return;
+    }
+
+    mergeSequenceTrackUsage(selectedSequenceFilters[existingIndex], incoming);
     selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
     saveSequenceFilters();
     renderSequenceFilters();
 }
 
-function addIgnoredTrack(sequenceKey, kind, trackNumber) {
-    const filter = getSequenceFilterByKey(sequenceKey);
-    if (!filter || !trackNumber) {
-        return;
-    }
-
-    const key = kind === 'video' ? 'ignoredVideoTracks' : 'ignoredAudioTracks';
-    if (filter[key].indexOf(trackNumber) === -1) {
-        filter[key].push(trackNumber);
-        filter[key].sort((a, b) => a - b);
-    }
-
-    saveSequenceFilters();
-    renderSequenceFilters();
+function resetTrackSelection() {
+    selectedSequenceFilters = [];
+    trackRangeAnchor = null;
+    try {
+        localStorage.removeItem(SEQUENCE_FILTERS_STORAGE_KEY);
+    } catch (error) {}
+    loadSequenceFilters();
 }
 
-function removeIgnoredTrack(sequenceKey, kind, trackNumber) {
-    const filter = getSequenceFilterByKey(sequenceKey);
-    if (!filter) {
-        return;
-    }
-
-    const key = kind === 'video' ? 'ignoredVideoTracks' : 'ignoredAudioTracks';
-    filter[key] = filter[key].filter((value) => value !== trackNumber);
-
+function removeSequenceFilter(sequenceKey) {
+    selectedSequenceFilters = selectedSequenceFilters.filter((filter, index) => index === 0 || (filter.sequenceID || filter.sequenceName) !== sequenceKey);
+    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
     saveSequenceFilters();
     renderSequenceFilters();
 }
@@ -1025,6 +1341,195 @@ function buildIgnoredMediaSet() {
     });
 
     return ignoredPaths;
+}
+
+function getProjectFolderEntries() {
+    if (!latestPlan || !Array.isArray(latestPlan.folders)) {
+        return [];
+    }
+
+    return latestPlan.folders
+        .map(normalizeProjectFolderPath)
+        .filter(isRootProjectFolderPath)
+        .map((folderPath) => {
+            const count = (latestPlan.tasks || []).filter((task) => isTaskInsideProjectFolder(task, folderPath)).length;
+            return {
+                folderPath,
+                count
+            };
+        });
+}
+
+function isProjectFolderIgnored(folderPath) {
+    const normalized = normalizeProjectFolderPath(folderPath);
+    return ignoredProjectFolders.some((value) => normalizeProjectFolderPath(value) === normalized);
+}
+
+function isProjectFolderIncluded(folderPath) {
+    const normalized = normalizeProjectFolderPath(folderPath);
+    return includedProjectFolders.some((value) => normalizeProjectFolderPath(value) === normalized);
+}
+
+function setProjectFolderIgnored(folderPath, ignored) {
+    const normalized = normalizeProjectFolderPath(folderPath);
+    ignoredProjectFolders = ignoredProjectFolders.filter((value) => normalizeProjectFolderPath(value) !== normalized);
+    includedProjectFolders = includedProjectFolders.filter((value) => normalizeProjectFolderPath(value) !== normalized);
+
+    if (ignored && normalized) {
+        ignoredProjectFolders.push(normalized);
+    }
+}
+
+function setProjectFolderIncluded(folderPath, included) {
+    const normalized = normalizeProjectFolderPath(folderPath);
+    includedProjectFolders = includedProjectFolders.filter((value) => normalizeProjectFolderPath(value) !== normalized);
+    ignoredProjectFolders = ignoredProjectFolders.filter((value) => normalizeProjectFolderPath(value) !== normalized);
+
+    if (included && normalized) {
+        includedProjectFolders.push(normalized);
+    }
+}
+
+function cycleProjectFolderState(folderPath) {
+    const included = isProjectFolderIncluded(folderPath);
+    const ignored = isProjectFolderIgnored(folderPath);
+
+    folderRangeAnchor = null;
+
+    if (!included && !ignored) {
+        setProjectFolderIncluded(folderPath, true);
+    } else if (included) {
+        setProjectFolderIgnored(folderPath, true);
+    } else {
+        setProjectFolderIgnored(folderPath, false);
+    }
+
+    renderProjectFolderFilters();
+    updateSelectionSummary();
+}
+
+function ignoreProjectFolderRange(anchor, folderPath) {
+    const entries = getProjectFolderEntries();
+    const target = normalizeProjectFolderPath(folderPath);
+
+    if (!anchor) {
+        folderRangeAnchor = target;
+        renderProjectFolderFilters();
+        return;
+    }
+
+    const startIndex = entries.findIndex((entry) => entry.folderPath === anchor);
+    const endIndex = entries.findIndex((entry) => entry.folderPath === target);
+
+    if (startIndex === -1 || endIndex === -1) {
+        folderRangeAnchor = target;
+        renderProjectFolderFilters();
+        return;
+    }
+
+    const start = Math.min(startIndex, endIndex);
+    const end = Math.max(startIndex, endIndex);
+
+    for (let index = start; index <= end; index += 1) {
+        setProjectFolderIgnored(entries[index].folderPath, true);
+    }
+
+    folderRangeAnchor = null;
+    renderProjectFolderFilters();
+    updateSelectionSummary();
+}
+
+function handleProjectFolderClick(folderPath) {
+    if (folderClickTimer) {
+        clearTimeout(folderClickTimer);
+    }
+
+    folderClickTimer = setTimeout(() => {
+        cycleProjectFolderState(folderPath);
+        folderClickTimer = null;
+    }, 220);
+}
+
+function handleProjectFolderDoubleClick(folderPath) {
+    if (folderClickTimer) {
+        clearTimeout(folderClickTimer);
+        folderClickTimer = null;
+    }
+
+    ignoreProjectFolderRange(folderRangeAnchor, folderPath);
+}
+
+function resetProjectFolderSelection() {
+    includedProjectFolders = [];
+    ignoredProjectFolders = [];
+    folderRangeAnchor = null;
+    renderProjectFolderFilters();
+    updateSelectionSummary();
+}
+
+function renderProjectFolderFilters() {
+    const container = document.getElementById('projectFolderFilters');
+    const hint = document.getElementById('projectFolderHint');
+
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+    const entries = getProjectFolderEntries();
+
+    if (!entries.length) {
+        const empty = document.createElement('div');
+        empty.className = 'small-note';
+        empty.textContent = 'No Premiere project folders found.';
+        container.appendChild(empty);
+        if (hint) {
+            hint.textContent = 'Only root bins are shown here. Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.';
+        }
+        return;
+    }
+
+    entries.forEach((entry) => {
+        const item = document.createElement('div');
+        const button = document.createElement('button');
+        const included = isProjectFolderIncluded(entry.folderPath);
+        const ignored = isProjectFolderIgnored(entry.folderPath);
+        const isAnchor = folderRangeAnchor === entry.folderPath;
+        const displayName = entry.folderPath.split('/').pop();
+
+        item.className = 'choice-item';
+        button.type = 'button';
+        button.className = `choice-button folder-button${included ? ' is-included' : ''}${ignored ? ' is-ignored' : ''}${isAnchor ? ' is-range-anchor' : ''}`;
+        button.onclick = (event) => {
+            if (event.detail === 1) {
+                handleProjectFolderClick(entry.folderPath);
+            }
+        };
+        button.ondblclick = () => handleProjectFolderDoubleClick(entry.folderPath);
+
+        const title = document.createElement('span');
+        title.className = 'choice-title';
+        title.textContent = displayName;
+        button.appendChild(title);
+
+        const meta = document.createElement('span');
+        meta.className = 'choice-meta';
+        meta.textContent = `${entry.count} ${entry.count === 1 ? 'file' : 'files'}`;
+        item.appendChild(button);
+        item.appendChild(meta);
+
+        container.appendChild(item);
+    });
+
+    if (hint) {
+        const includedCount = includedProjectFolders.length;
+        const skippedCount = ignoredProjectFolders.length;
+        if (includedCount || skippedCount) {
+            hint.textContent = `${includedCount} force-copy folder${includedCount === 1 ? '' : 's'}, ${skippedCount} ignored folder${skippedCount === 1 ? '' : 's'}. Ignored bins win first; green bins copy even when track choices would skip them.`;
+        } else {
+            hint.textContent = 'Neutral root bins add no rule. Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.';
+        }
+    }
 }
 
 function buildTaskSelectionMap() {
@@ -1145,6 +1650,8 @@ function renderSourceTree() {
 
 async function loadProjectPlan() {
     const previousSelections = selectionTouched ? buildTaskSelectionMap() : null;
+    const previousIncludedFolders = includedProjectFolders.slice();
+    const previousIgnoredFolders = ignoredProjectFolders.slice();
 
     if (!(await ensureHostScriptLoaded())) {
         return false;
@@ -1162,11 +1669,19 @@ async function loadProjectPlan() {
 
     latestPlan = plan;
     sourceTree = buildSourceTree(plan.tasks || []);
+    const availableFolders = new Set((plan.folders || []).map(normalizeProjectFolderPath).filter(isRootProjectFolderPath));
+    includedProjectFolders = previousIncludedFolders
+        .map(normalizeProjectFolderPath)
+        .filter((folderPath) => availableFolders.has(folderPath));
+    ignoredProjectFolders = previousIgnoredFolders
+        .map(normalizeProjectFolderPath)
+        .filter((folderPath) => availableFolders.has(folderPath) && includedProjectFolders.indexOf(folderPath) === -1);
     if (previousSelections) {
         applyTaskSelectionMap(previousSelections);
     }
     loadSequenceFilters();
     renderSourceTree();
+    renderProjectFolderFilters();
     return true;
 }
 
@@ -1252,7 +1767,30 @@ function setBusyState(busy) {
     document.getElementById('updateButton').disabled = busy || !(remoteVersion && compareVersions(remoteVersion, localVersion) > 0);
 }
 
+function hideCompletionPrompt() {
+    const prompt = document.getElementById('completionPrompt');
+    if (prompt) {
+        prompt.classList.remove('is-visible');
+    }
+}
+
+function showCompletionPrompt(success, message) {
+    const prompt = document.getElementById('completionPrompt');
+    const title = document.getElementById('completionTitle');
+    const body = document.getElementById('completionMessage');
+
+    if (!prompt || !title || !body) {
+        return;
+    }
+
+    title.textContent = success ? 'Done without error' : 'Done with errors';
+    title.classList.toggle('has-error', !success);
+    body.textContent = message;
+    prompt.classList.add('is-visible');
+}
+
 function resetResults() {
+    hideCompletionPrompt();
     setText('currentFile', 'Waiting to start');
     setText('progressText', '0 / 0 files copied');
     setText('summaryText', 'Select a destination folder to build the project package.');
@@ -1282,14 +1820,14 @@ function setAllSelections(selected) {
     renderSourceTree();
 }
 
-function renderList(listId, items, formatter) {
+function renderList(listId, items, formatter, emptyMessage) {
     const list = document.getElementById(listId);
     list.innerHTML = '';
 
     if (!items.length) {
         const row = document.createElement('li');
         row.className = 'list-empty';
-        row.textContent = 'None';
+        row.textContent = emptyMessage || 'None';
         list.appendChild(row);
         return;
     }
@@ -1317,6 +1855,48 @@ async function chooseFolder() {
         } catch (error) {}
         setText('summaryText', 'Destination ready. Click Copy Project Media to begin.');
     }
+}
+
+function hasIgnoredTracks(filtersPayload) {
+    return filtersPayload.some((filter) => (
+        (Array.isArray(filter.ignoredVideoTracks) && filter.ignoredVideoTracks.length)
+        || (Array.isArray(filter.ignoredAudioTracks) && filter.ignoredAudioTracks.length)
+    ));
+}
+
+async function buildIgnoredMediaSetForCopy(filtersPayload) {
+    const fallbackIgnoredMedia = buildIgnoredMediaSet();
+
+    if (!hasIgnoredTracks(filtersPayload)) {
+        return {
+            ignoredMediaSet: fallbackIgnoredMedia,
+            warning: ''
+        };
+    }
+
+    const ignoredRaw = await callHost(`getIgnoredTrackMediaPlan("${escapeForEvalScript(JSON.stringify(filtersPayload))}")`);
+    const ignoredPlan = safeJsonParse(ignoredRaw);
+
+    if (!ignoredPlan || ignoredPlan.error) {
+        return {
+            ignoredMediaSet: fallbackIgnoredMedia,
+            warning: ignoredPlan && ignoredPlan.error
+                ? `Ignored track nested-media check failed: ${ignoredPlan.error}`
+                : `Ignored track nested-media check failed. Raw response: ${ignoredRaw}`
+        };
+    }
+
+    return {
+        ignoredMediaSet: new Set((ignoredPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath))),
+        warning: ''
+    };
+}
+
+function buildLinkProjectTasks(copiedTasks) {
+    return copiedTasks.map((task) => ({
+        source: task.source,
+        destination: task.destinationPath
+    }));
 }
 
 async function collect() {
@@ -1349,14 +1929,16 @@ async function collect() {
         }
     }
 
-    const escapedDestination = escapeForEvalScript(destination);
     const treeSelectedTasks = getSelectedTasks();
-    const ignoredMediaSet = buildIgnoredMediaSet();
+    const treeSelectedTaskSet = new Set(treeSelectedTasks);
+    const filtersPayload = buildSequenceFiltersPayload().filter((filter) => filter.sequenceID || filter.sequenceName);
+    const ignoredMediaInfo = await buildIgnoredMediaSetForCopy(filtersPayload);
+    const ignoredMediaSet = ignoredMediaInfo.ignoredMediaSet;
+    const copyWarnings = ignoredMediaInfo.warning ? [ignoredMediaInfo.warning] : [];
     let sequenceScopedMediaSet = null;
     let sequenceScopeInfo = null;
 
     if (sequenceOnlyMode) {
-        const filtersPayload = buildSequenceFiltersPayload().filter((filter) => filter.sequenceID || filter.sequenceName);
         if (!filtersPayload.length) {
             alert('Add at least one sequence before using selected-sequence collection mode.');
             setBusyState(false);
@@ -1373,16 +1955,23 @@ async function collect() {
 
         sequenceScopedMediaSet = new Set((scopedPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
         sequenceScopeInfo = scopedPlan;
-
-        if (!sequenceScopedMediaSet.size) {
-            setBusyState(false);
-            alert('No media was found for the selected sequences. Check the selected sequences and ignored tracks, then try again.');
-            return;
-        }
     }
 
-    const selectedTasks = treeSelectedTasks.filter((task) => {
+    const selectedTasks = (latestPlan.tasks || []).filter((task) => {
         const mediaKey = normalizeMediaKey(task.source);
+        const insideIncludedFolder = isTaskInsideIncludedProjectFolder(task);
+
+        if (isTaskInsideIgnoredProjectFolder(task)) {
+            return false;
+        }
+
+        if (insideIncludedFolder) {
+            return true;
+        }
+
+        if (!treeSelectedTaskSet.has(task)) {
+            return false;
+        }
 
         if (sequenceScopedMediaSet && !sequenceScopedMediaSet.has(mediaKey)) {
             return false;
@@ -1394,34 +1983,58 @@ async function collect() {
 
         return true;
     });
+
+    const rootPath = path.join(destination, latestPlan.projectName);
     const plan = {
-        rootPath: path.join(destination, latestPlan.projectName),
-        tasks: selectedTasks,
+        rootPath,
+        tasks: buildCollectedTasks(selectedTasks, rootPath),
         missingMedia: Array.isArray(latestPlan.missingMedia) ? latestPlan.missingMedia : []
     };
+    const total = plan.tasks.length;
 
-    const prepRaw = await callHost(`prepareProjectStructure("${escapedDestination}")`);
-    const prep = safeJsonParse(prepRaw);
-    if (!prep || prep.error) {
-        setBusyState(false);
-        setText('summaryText', prep && prep.error ? prep.error : `Could not prepare destination folders. Raw response: ${prepRaw}`);
-        return;
+    const willCreateReducedProject = sequenceOnlyMode && createReducedProject && sequenceScopeInfo && Array.isArray(sequenceScopeInfo.includedSequenceIDs) && sequenceScopeInfo.includedSequenceIDs.length;
+    if (total > 0 || copyProjectFile || willCreateReducedProject) {
+        try {
+            ensureDirectorySync(plan.rootPath);
+        } catch (error) {
+            setBusyState(false);
+            setText('summaryText', `Could not prepare destination folder. ${error.message}`);
+            return;
+        }
     }
 
-    const total = plan.tasks.length;
     const failures = [];
+    const copiedMediaTasks = [];
     const missingMedia = Array.isArray(plan.missingMedia) ? plan.missingMedia : [];
-    const skippedBySelection = (latestPlan.tasks || [])
-        .filter((task) => !treeSelectedTasks.includes(task))
-        .map((task) => `${task.source} -> skipped by selection`);
-    const skippedBySequenceScope = sequenceScopedMediaSet
-        ? (latestPlan.tasks || [])
-            .filter((task) => !sequenceScopedMediaSet.has(normalizeMediaKey(task.source)))
-            .map((task) => `${task.source} -> skipped because it is not used by the chosen sequences`)
-        : [];
-    const skippedByIgnoredTracks = (latestPlan.tasks || [])
-        .filter((task) => ignoredMediaSet.has(normalizeMediaKey(task.source)))
-        .map((task) => `${task.source} -> skipped by ignored track filter`);
+    const skippedItems = [];
+
+    (latestPlan.tasks || []).forEach((task) => {
+        const mediaKey = normalizeMediaKey(task.source);
+        const insideIncludedFolder = isTaskInsideIncludedProjectFolder(task);
+
+        if (isTaskInsideIgnoredProjectFolder(task)) {
+            skippedItems.push(`${task.source} -> skipped because Premiere folder "${task.binPath}" is ignored`);
+            return;
+        }
+
+        if (insideIncludedFolder) {
+            return;
+        }
+
+        if (!treeSelectedTaskSet.has(task)) {
+            skippedItems.push(`${task.source} -> skipped by Source File List selection`);
+            return;
+        }
+
+        if (sequenceScopedMediaSet && !sequenceScopedMediaSet.has(mediaKey)) {
+            skippedItems.push(`${task.source} -> skipped because it is not used by the chosen sequences`);
+            return;
+        }
+
+        if (ignoredMediaSet.has(mediaKey)) {
+            skippedItems.push(`${task.source} -> skipped by ignored track selection`);
+        }
+    });
 
     if (sequenceOnlyMode && sequenceScopeInfo) {
         setText('summaryText', `Windows robocopy mode active. Copying only media used by ${sequenceScopeInfo.includedSequences.length} chosen/nested sequences into ${plan.rootPath}`);
@@ -1429,6 +2042,7 @@ async function collect() {
         setText('summaryText', `Windows robocopy mode active. Copying into ${plan.rootPath}`);
     }
     setText('progressText', `0 / ${total} files copied`);
+    document.getElementById('progressFill').style.width = total === 0 ? '100%' : '0%';
 
     for (let index = 0; index < total; index += 1) {
         const task = plan.tasks[index];
@@ -1443,6 +2057,10 @@ async function collect() {
                 destination: destinationPath,
                 message: copyResult.message || 'Unknown copy error'
             });
+        } else {
+            copiedMediaTasks.push(Object.assign({}, task, {
+                destinationPath
+            }));
         }
 
         const completed = index + 1;
@@ -1456,27 +2074,76 @@ async function collect() {
     }
 
     let copiedProjectMessage = '';
-    if (latestPlan && latestPlan.projectPath) {
+    let linkedProjectMessage = '';
+    let copiedProjectPath = '';
+
+    if (copyProjectFile) {
         setText('currentFile', 'Saving and copying Premiere project file');
         const projectSaveRaw = await callHost('saveCurrentProjectAndGetPath()');
         const projectSaveInfo = safeJsonParse(projectSaveRaw);
 
         if (projectSaveInfo && !projectSaveInfo.error && projectSaveInfo.projectPath) {
-            const projectCopyResult = await copyProjectFileIntoCollectedRoot(plan.rootPath, projectSaveInfo.projectPath);
+            const projectCopyResult = await copyProjectFileIntoCollectedRoot(plan.rootPath, projectSaveInfo.projectPath, getCollectedProjectFileName(projectSaveInfo.projectPath));
             if (projectCopyResult.success) {
-                copiedProjectMessage = ' Project file copied.';
+                copiedProjectPath = projectCopyResult.destinationPath;
+                copiedProjectMessage = ` Project file copied as ${path.basename(copiedProjectPath)}.`;
             } else {
                 copiedProjectMessage = ` Project file copy failed: ${projectCopyResult.message || 'Unknown error'}.`;
+                failures.push({
+                    source: projectSaveInfo.projectPath,
+                    destination: plan.rootPath,
+                    message: projectCopyResult.message || 'Project file copy failed'
+                });
             }
         } else {
             copiedProjectMessage = ` Project file copy skipped.${projectSaveInfo && projectSaveInfo.error ? ` ${projectSaveInfo.error}` : ''}`;
+            failures.push({
+                source: latestPlan && latestPlan.projectPath ? latestPlan.projectPath : 'Premiere project file',
+                destination: plan.rootPath,
+                message: projectSaveInfo && projectSaveInfo.error ? projectSaveInfo.error : 'Project file path was not available'
+            });
         }
+
+        if (linkProjectAfterCollection) {
+            if (copiedProjectPath) {
+                setText('currentFile', 'Linking copied project to collected media');
+                const linkRaw = await callHost(
+                    `linkProjectCopyToCollectedMedia("${escapeForEvalScript(copiedProjectPath)}","${escapeForEvalScript(JSON.stringify(buildLinkProjectTasks(copiedMediaTasks)))}")`
+                );
+                const linkResult = safeJsonParse(linkRaw);
+
+                if (linkResult && !linkResult.error) {
+                    linkedProjectMessage = ` Project linked to ${linkResult.linkedCount || 0} collected media files.`;
+                    if (Array.isArray(linkResult.failed) && linkResult.failed.length) {
+                        linkResult.failed.forEach((message) => {
+                            failures.push({
+                                source: copiedProjectPath,
+                                destination: copiedProjectPath,
+                                message
+                            });
+                        });
+                        linkedProjectMessage = ` Project linked to ${linkResult.linkedCount || 0} collected media files with ${linkResult.failed.length} relink errors.`;
+                    }
+                } else {
+                    linkedProjectMessage = ` Project link failed.${linkResult && linkResult.error ? ` ${linkResult.error}` : ''}`;
+                    failures.push({
+                        source: copiedProjectPath,
+                        destination: copiedProjectPath,
+                        message: linkResult && linkResult.error ? linkResult.error : `Could not link copied project. Raw response: ${linkRaw}`
+                    });
+                }
+            } else {
+                linkedProjectMessage = ' Project link skipped because the project file was not copied.';
+            }
+        }
+    } else {
+        copiedProjectMessage = ' Project file copy disabled.';
     }
 
     setText('currentFile', total ? 'Copy finished' : 'No copyable media found');
     let reducedProjectMessage = '';
 
-    if (sequenceOnlyMode && createReducedProject && sequenceScopeInfo && Array.isArray(sequenceScopeInfo.includedSequenceIDs) && sequenceScopeInfo.includedSequenceIDs.length) {
+    if (willCreateReducedProject) {
         const reducedRaw = await callHost(
             `createReducedProjectFromSequenceSelection("${escapeForEvalScript(plan.rootPath)}","${escapeForEvalScript(JSON.stringify(sequenceScopeInfo.includedSequenceIDs))}")`
         );
@@ -1485,16 +2152,30 @@ async function collect() {
             reducedProjectMessage = ` Reduced project created: ${reducedProjectResult.reducedProjectPath}`;
         } else {
             reducedProjectMessage = ` Reduced project could not be created.${reducedProjectResult && reducedProjectResult.error ? ` ${reducedProjectResult.error}` : ''}`;
+            failures.push({
+                source: 'Reduced Premiere project',
+                destination: plan.rootPath,
+                message: reducedProjectResult && reducedProjectResult.error ? reducedProjectResult.error : 'Reduced project could not be created'
+            });
         }
     }
 
+    const skippedAndWarnings = missingMedia.concat(skippedItems, copyWarnings);
+    const finalSummary = `Completed. ${copiedMediaTasks.length} of ${total} media files copied, ${failures.length} error${failures.length === 1 ? '' : 's'}, ${skippedAndWarnings.length} skipped.${copiedProjectMessage}${linkedProjectMessage}${reducedProjectMessage}`;
+
     setText(
         'summaryText',
-        `Completed. ${total - failures.length} copied, ${failures.length} failed, ${missingMedia.length + skippedBySelection.length + skippedBySequenceScope.length + skippedByIgnoredTracks.length} skipped.${copiedProjectMessage}${reducedProjectMessage}`
+        finalSummary
     );
 
-    renderList('errorList', failures, (item) => `${item.source} -> ${item.destination} | ${item.message}`);
-    renderList('missingList', missingMedia.concat(skippedBySelection, skippedBySequenceScope, skippedByIgnoredTracks), (item) => item);
+    renderList('errorList', failures, (item) => `${item.source} -> ${item.destination} | ${item.message}`, 'No error. All files copied successfully.');
+    renderList('missingList', skippedAndWarnings, (item) => item, 'No skipped items.');
+    showCompletionPrompt(
+        failures.length === 0,
+        failures.length === 0
+            ? `All selected files copied successfully.${copiedProjectMessage}${linkedProjectMessage}${reducedProjectMessage}`
+            : `Copy finished with ${failures.length} error${failures.length === 1 ? '' : 's'}. Check Files Not Copied for details.`
+    );
     setBusyState(false);
 }
 
@@ -1513,21 +2194,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('sourceListBox').style.display = 'none';
     setText('showListButton', 'Show List');
     try {
-        sequenceOnlyMode = localStorage.getItem(SEQUENCE_ONLY_MODE_STORAGE_KEY) === '1';
+        sequenceOnlyMode = true;
         createReducedProject = localStorage.getItem(CREATE_REDUCED_PROJECT_STORAGE_KEY) === '1';
     } catch (error) {
-        sequenceOnlyMode = false;
+        sequenceOnlyMode = true;
         createReducedProject = false;
     }
     try {
-        const ignoreVisible = localStorage.getItem(IGNORE_SECTION_VISIBLE_STORAGE_KEY) === '1';
+        const savedIgnoreVisible = localStorage.getItem(IGNORE_SECTION_VISIBLE_STORAGE_KEY);
+        const ignoreVisible = savedIgnoreVisible === null ? true : savedIgnoreVisible === '1';
         setIgnoreSectionVisibility(ignoreVisible);
     } catch (error) {
-        setIgnoreSectionVisibility(false);
+        setIgnoreSectionVisibility(true);
+    }
+    setProjectFolderSectionVisibility(false);
+    try {
+        const savedCopyProjectFile = localStorage.getItem(COPY_PROJECT_FILE_STORAGE_KEY);
+        copyProjectFile = savedCopyProjectFile === null ? true : savedCopyProjectFile === '1';
+        linkProjectAfterCollection = localStorage.getItem(LINK_PROJECT_AFTER_COLLECTION_STORAGE_KEY) === '1';
+    } catch (error) {
+        copyProjectFile = true;
+        linkProjectAfterCollection = false;
     }
     setUpdateButton(`Version ${localVersion}`, false);
     checkForUpdates();
     syncSequenceModeUI();
+    syncProjectOptionUI();
     await loadProjectPlan();
 });
 

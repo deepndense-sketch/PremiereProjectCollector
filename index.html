@@ -17,7 +17,8 @@
     --accent: #1f8bff;
     --accent-2: #42a5ff;
     --accent-soft: #163b68;
-    --success: #5ca4ff;
+    --success: #38d36f;
+    --success-soft: #153b27;
     --danger-soft: #5e2f37;
     --danger: #ff6b6b;
     --shadow: rgba(0, 0, 0, 0.35);
@@ -404,6 +405,121 @@ button:disabled {
     color: white;
 }
 
+.button-strip {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.choice-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.choice-item {
+    display: grid;
+    gap: 3px;
+    justify-items: stretch;
+}
+
+.choice-button {
+    min-width: 58px;
+    padding: 7px 9px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #27884b, #1f6f3d);
+    color: #f5fff8;
+    border: 1px solid rgba(92, 232, 137, 0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    text-align: left;
+}
+
+.choice-button.is-ignored {
+    opacity: 0.42;
+    background: linear-gradient(180deg, #2d7247, #225737);
+    border-color: rgba(92, 232, 137, 0.34);
+}
+
+.choice-button.is-range-anchor {
+    opacity: 1;
+    background: linear-gradient(135deg, #1f8bff, #1366c8);
+    border-color: #65b5ff;
+    color: #ffffff;
+}
+
+.choice-title,
+.choice-meta {
+    display: block;
+}
+
+.choice-title {
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.choice-meta {
+    font-size: 10px;
+    color: rgba(255,255,255,0.78);
+    line-height: 1.25;
+    text-align: center;
+    max-width: 220px;
+}
+
+.folder-button {
+    min-width: 130px;
+    max-width: 220px;
+    background: linear-gradient(180deg, #46505e, #38414c);
+    border-color: #5a6779;
+    color: #f3f6fb;
+}
+
+.folder-button.is-included {
+    background: linear-gradient(180deg, #27884b, #1f6f3d);
+    border-color: rgba(92, 232, 137, 0.45);
+    color: #f5fff8;
+}
+
+.done-prompt {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(6, 8, 12, 0.68);
+    z-index: 1000;
+}
+
+.done-prompt.is-visible {
+    display: flex;
+}
+
+.done-dialog {
+    width: min(520px, 100%);
+    background: var(--panel);
+    border: 1px solid var(--line-soft);
+    border-radius: 16px;
+    padding: 22px;
+    box-shadow: 0 24px 70px var(--shadow);
+}
+
+.done-title {
+    margin: 0 0 10px;
+    color: var(--success);
+    font-size: 30px;
+    line-height: 1.15;
+}
+
+.done-title.has-error {
+    color: var(--danger);
+}
+
+.done-message {
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 18px;
+}
+
 .tree-box {
     max-height: 420px;
 }
@@ -419,8 +535,8 @@ button:disabled {
 .tree-node {
     background: var(--panel-2);
     border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 10px 12px;
+    border-radius: 10px;
+    padding: 8px 10px;
 }
 
 .tree-row {
@@ -531,33 +647,24 @@ button:disabled {
             <h1>Project Collector</h1>
             <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
         </div>
-        <p>Build a clean delivery folder from the current Premiere project, preserve the project bin structure, and review any copy failures in one place.</p>
     </section>
 
     <section class="grid">
         <div class="card full-width">
-            <h2 class="card-title">Source File List</h2>
-            <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. If nothing is selected here, the copy still includes all files by default.</p>
-            <div class="tree-toolbar">
-                <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
-                <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
-                <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
-                <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
-            </div>
-            <div class="path-box" id="selectionSummary">Loading project files from Premiere...</div>
-            <div class="list-box tree-box" id="sourceListBox" style="margin-top: 14px;">
-                <ul class="tree-list" id="sourceTree"></ul>
-            </div>
-        </div>
-
-        <div class="card full-width">
             <div class="section-header-row">
                 <h2 class="card-title" style="margin: 0;">Ignore Media On Tracks</h2>
-                <button id="toggleIgnoreButton" class="button-secondary section-toggle" onclick="toggleIgnoreSection()">Show</button>
+                <button id="toggleIgnoreButton" class="button-secondary section-toggle" onclick="toggleIgnoreSection()">Hide</button>
             </div>
-            <div id="ignoreSectionContent" style="display: none;">
-                <p class="selection-note" style="margin-top: 14px;">Skip copying source media used on selected tracks from one or more chosen sequences. The current active sequence is added by default, and you can switch sequences in Premiere and add more.</p>
-                <div class="option-stack">
+            <div id="ignoreSectionContent" style="display: block;">
+                <p class="selection-note" style="margin-top: 14px;">Green tracks are included. Single-click a track to fade it and ignore its media. Double-click one track, then double-click another track in the same group to ignore that full range.</p>
+                <div class="tree-toolbar">
+                    <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
+                    <button class="button-secondary button-small" onclick="refreshTrackSelection()">Refresh Tracks</button>
+                    <button class="button-danger-soft button-small" onclick="resetTrackSelection()">Reset</button>
+                </div>
+                <div class="sequence-filter-stack" id="sequenceFilters"></div>
+                <div class="small-note" id="sequenceFilterHint">Nested sequence media is collected correctly even when a visible track count only reflects direct clips.</div>
+                <div class="option-stack" style="margin-top: 14px;">
                     <label class="option-row">
                         <input id="sequenceOnlyMode" type="checkbox" onchange="toggleSequenceOnlyMode()">
                         <span>Copy only media used by the chosen sequences, and include all nested sequences used inside them.</span>
@@ -567,11 +674,37 @@ button:disabled {
                         <span>Create a reduced Premiere project from the chosen sequences after media copy finishes.</span>
                     </label>
                 </div>
+            </div>
+        </div>
+
+        <div class="card full-width">
+            <div class="section-header-row">
+                <h2 class="card-title" style="margin: 0;">Ignore Premiere Project Folders</h2>
+                <button id="toggleProjectFoldersButton" class="button-secondary section-toggle" onclick="toggleProjectFolderSection()">Show</button>
+            </div>
+            <div id="projectFolderSectionContent" style="display: none;">
+                <p class="selection-note" style="margin-top: 14px;">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win over track choices; green bins force-copy over track choices. Double-click two bins to ignore the full range between them.</p>
                 <div class="tree-toolbar">
-                    <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
+                    <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh Folders</button>
+                    <button class="button-danger-soft button-small" onclick="resetProjectFolderSelection()">Reset</button>
                 </div>
-                <div class="sequence-filter-stack" id="sequenceFilters"></div>
-                <div class="small-note" id="sequenceFilterHint">Switch to another sequence in Premiere, then click Add Current Active Sequence to include its track filters here too.</div>
+                <div class="choice-grid" id="projectFolderFilters"></div>
+                <div class="small-note" id="projectFolderHint">Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.</div>
+            </div>
+        </div>
+
+        <div class="card full-width">
+            <h2 class="card-title">Source File List</h2>
+            <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. The list opens at the root only; expanding a folder shows just the next level.</p>
+            <div class="tree-toolbar">
+                <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
+                <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
+                <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
+                <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
+            </div>
+            <div class="path-box" id="selectionSummary">Loading project files from Premiere...</div>
+            <div class="list-box tree-box" id="sourceListBox" style="margin-top: 14px;">
+                <ul class="tree-list" id="sourceTree"></ul>
             </div>
         </div>
 
@@ -587,6 +720,17 @@ button:disabled {
 
                 <div>
                     <button id="collectButton" class="button-primary" onclick="collect()">Copy Project Media</button>
+                </div>
+
+                <div class="option-stack">
+                    <label class="option-row">
+                        <input id="copyProjectFile" type="checkbox" onchange="toggleCopyProjectFile()">
+                        <span>Copy Premiere project file after collection and name it BACKUP.</span>
+                    </label>
+                    <label class="option-row">
+                        <input id="linkProjectAfterCollection" type="checkbox" onchange="toggleLinkProjectAfterCollection()">
+                        <span>Link copied project to the collected media after collection.</span>
+                    </label>
                 </div>
 
                 <div>
@@ -615,7 +759,15 @@ button:disabled {
                 <ul class="result-list" id="missingList"></ul>
             </div>
         </div>
+
     </section>
+</div>
+<div class="done-prompt" id="completionPrompt">
+    <div class="done-dialog">
+        <h2 class="done-title" id="completionTitle">Done without error</h2>
+        <div class="done-message" id="completionMessage">All files copied successfully.</div>
+        <button class="button-primary" onclick="hideCompletionPrompt()">Close</button>
+    </div>
 </div>
 </body>
 </html>

@@ -1,5 +1,5 @@
 {
-  "version": "2.1.3",
+  "version": "2.1.4",
   "channel": "main",
-  "notes": "Release 2.1.3 gives the Destination section a dark blue background with purple action buttons."
+  "notes": "Release 2.1.4 fixes GitHub updater quoting for installed paths with spaces such as Program Files."
 }

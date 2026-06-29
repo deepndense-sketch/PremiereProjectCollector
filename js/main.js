@@ -430,13 +430,25 @@ function runGithubUpdate() {
 
     downloadFile(remoteZipUrl, tempUpdaterZipPath)
         .then(() => {
-            const escapedScriptPath = tempUpdaterScriptPath.replace(/'/g, "''");
-            const escapedZipPath = tempUpdaterZipPath.replace(/'/g, "''");
             const updateDestination = getInstalledExtensionPath();
-            const destination = updateDestination.replace(/'/g, "''");
-            const escapedResultPath = tempUpdaterResultPath.replace(/'/g, "''");
-            const escapedLogPath = tempUpdaterLogPath.replace(/'/g, "''");
-            const command = `Start-Process PowerShell -Verb RunAs -ArgumentList '-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-File','${escapedScriptPath}','-ZipPath','${escapedZipPath}','-Destination','${destination}','-ResultPath','${escapedResultPath}','-LogPath','${escapedLogPath}'`;
+            const updaterArguments = [
+                '-NoExit',
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                quoteForWindowsArgument(tempUpdaterScriptPath),
+                '-ZipPath',
+                quoteForWindowsArgument(tempUpdaterZipPath),
+                '-Destination',
+                quoteForWindowsArgument(updateDestination),
+                '-ResultPath',
+                quoteForWindowsArgument(tempUpdaterResultPath),
+                '-LogPath',
+                quoteForWindowsArgument(tempUpdaterLogPath)
+            ].join(' ');
+            const escapedArgumentList = escapeForPowerShellSingleQuotedString(updaterArguments);
+            const command = `Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList '${escapedArgumentList}'`;
 
             childProcess.execFile(
                 'powershell.exe',
@@ -463,6 +475,14 @@ function escapeForEvalScript(value) {
         .replace(/"/g, '\\"')
         .replace(/\r/g, "\\r")
         .replace(/\n/g, "\\n");
+}
+
+function quoteForWindowsArgument(value) {
+    return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function escapeForPowerShellSingleQuotedString(value) {
+    return String(value).replace(/'/g, "''");
 }
 
 function buildSequenceFiltersPayload() {

@@ -764,82 +764,8 @@ function findCompareMatchForTask(task, lookup) {
     return lookup.byNameAndSize.get(buildCompareSizeKey(signature.fileName, signature.size)) || null;
 }
 
-function getTaskCompareLabel(task) {
-    const signature = getSourceCompareSignature(task.source);
-    const fileName = path.basename(task.source || task.name || 'Media');
-    const sizeText = signature.size === null ? 'unknown size' : formatBytes(signature.size);
-    return `${fileName} (${sizeText}) | ${task.source}`;
-}
-
-function renderCurrentCopyList(tasks, compareMatches) {
-    const list = document.getElementById('currentCopyList');
-
-    if (!list) {
-        return;
-    }
-
-    list.innerHTML = '';
-
-    if (!tasks || !tasks.length) {
-        const row = document.createElement('li');
-        row.className = 'list-empty';
-        row.textContent = 'No media is copy-ready after current sequence, track, folder, and source-list selections.';
-        list.appendChild(row);
-        return;
-    }
-
-    const matchedTasks = new Map();
-    (compareMatches || []).forEach((item) => {
-        matchedTasks.set(item.task, item.match);
-    });
-
-    tasks.forEach((task) => {
-        const row = document.createElement('li');
-        const match = matchedTasks.get(task);
-        row.className = `list-item${match ? ' is-matched' : ''}`;
-        row.textContent = match
-            ? `${getTaskCompareLabel(task)} -> already in compare location: ${match.path}`
-            : getTaskCompareLabel(task);
-        list.appendChild(row);
-    });
-}
-
-function renderCompareFiles(files, errors, blocked) {
-    compareFiles = files || [];
-    compareScanErrors = errors || [];
-
+async function inspectCompareLocation() {
     if (!compareLocation) {
-        setText('compareSummary', 'Select a compare location to see existing files. BACKUP PROJECT will compare automatically before copying.');
-        renderList('compareFileList', [], null, 'No compare location selected.');
-        return;
-    }
-
-    if (blocked) {
-        setText('compareSummary', compareScanErrors[0] || 'Compare location could not be inspected.');
-    } else {
-        const warningText = compareScanErrors.length
-            ? ` ${compareScanErrors.length} folder or file warning${compareScanErrors.length === 1 ? '' : 's'} while scanning.`
-            : '';
-        setText('compareSummary', `${compareFiles.length} file${compareFiles.length === 1 ? '' : 's'} found in compare location. Folder location is ignored during matching.${warningText}`);
-    }
-
-    renderList(
-        'compareFileList',
-        compareFiles,
-        (item) => `${item.name} (${formatBytes(item.size)}) | ${item.path}`,
-        blocked ? 'Compare location could not be inspected.' : 'No files found in compare location.'
-    );
-}
-
-async function inspectCompareLocation(skipCurrentList) {
-    if (!compareLocation) {
-        renderCompareFiles([], [], false);
-        if (!skipCurrentList) {
-            const context = await buildCopyReadyContext();
-            if (context.ok) {
-                renderCurrentCopyList(context.selectedTasksBeforeCompare, []);
-            }
-        }
         return {
             files: [],
             errors: [],
@@ -848,30 +774,15 @@ async function inspectCompareLocation(skipCurrentList) {
         };
     }
 
-    setText('compareSummary', 'Inspecting compare location...');
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const scan = scanCompareFiles(compareLocation);
-    renderCompareFiles(scan.files, scan.errors, scan.blocked);
-    const result = Object.assign({}, scan, {
+    compareFiles = scan.files || [];
+    compareScanErrors = scan.errors || [];
+
+    return Object.assign({}, scan, {
         lookup: buildCompareLookup(scan.files)
     });
-
-    if (!skipCurrentList && !scan.blocked) {
-        const context = await buildCopyReadyContext();
-        if (context.ok) {
-            const matches = context.selectedTasksBeforeCompare
-                .map((task) => ({
-                    task,
-                    match: findCompareMatchForTask(task, result.lookup)
-                }))
-                .filter((item) => item.match);
-            renderCurrentCopyList(context.selectedTasksBeforeCompare, matches);
-            setText('compareSummary', `${scan.files.length} compare file${scan.files.length === 1 ? '' : 's'} checked against ${context.selectedTasksBeforeCompare.length} copy-ready project file${context.selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${matches.length} already exist and will be crossed out.`);
-        }
-    }
-
-    return result;
 }
 
 function splitSourcePath(filePath) {
@@ -2155,12 +2066,8 @@ function setBusyState(busy) {
     isCopying = busy;
     document.getElementById('chooseButton').disabled = busy;
     const compareButton = document.getElementById('compareButton');
-    const inspectCompareButton = document.getElementById('inspectCompareButton');
     if (compareButton) {
         compareButton.disabled = busy;
-    }
-    if (inspectCompareButton) {
-        inspectCompareButton.disabled = busy;
     }
     document.getElementById('collectButton').disabled = busy;
     const refreshButton = document.getElementById('refreshProjectButton');
@@ -2275,8 +2182,6 @@ async function chooseCompareFolder() {
         try {
             localStorage.setItem(COMPARE_LOCATION_STORAGE_KEY, compareLocation);
         } catch (error) {}
-        setText('compareSummary', 'Compare location ready. Click Inspect Compare Location, or BACKUP PROJECT will compare automatically.');
-        renderList('compareFileList', [], null, 'Compare location has not been inspected yet.');
     }
 }
 
@@ -2477,7 +2382,7 @@ async function collect() {
 
     if (compareLocation) {
         setText('currentFile', 'Inspecting compare location');
-        compareInfo = await inspectCompareLocation(true);
+        compareInfo = await inspectCompareLocation();
 
         if (compareInfo.blocked) {
             setBusyState(false);
@@ -2505,9 +2410,8 @@ async function collect() {
     });
 
     if (compareLocation) {
-        setText('compareSummary', `${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked against ${selectedTasksBeforeCompare.length} copy-ready project file${selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${compareMatches.length} already exist and will be skipped.`);
+        copyWarnings.push(`${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked. ${compareMatches.length} already exist and were skipped.`);
     }
-    renderCurrentCopyList(selectedTasksBeforeCompare, compareMatches);
 
     const rootPath = path.join(destination, latestPlan.projectName);
     const plan = {
@@ -2705,11 +2609,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (savedCompareLocation) {
             compareLocation = savedCompareLocation;
             setText('comparePath', compareLocation);
-            setText('compareSummary', 'Saved compare location loaded. Click Inspect Compare Location, or BACKUP PROJECT will compare automatically.');
         }
     } catch (error) {}
-    renderList('compareFileList', [], null, compareLocation ? 'Compare location has not been inspected yet.' : 'No compare location selected.');
-    renderCurrentCopyList([], []);
 
     document.getElementById('sourceListBox').style.display = 'none';
     setText('showListButton', 'Show List');

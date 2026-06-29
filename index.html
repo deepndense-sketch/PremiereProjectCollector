@@ -206,12 +206,6 @@ button:disabled {
     box-shadow: 0 10px 20px rgba(36, 77, 99, 0.18);
 }
 
-.button-inspect {
-    background: linear-gradient(135deg, #75613c, #5b462b);
-    color: #fff6e6;
-    box-shadow: 0 10px 20px rgba(91, 70, 43, 0.18);
-}
-
 .grid {
     display: grid;
     grid-template-columns: 1.15fr 0.85fr;
@@ -687,11 +681,6 @@ button:disabled {
     color: var(--muted);
 }
 
-.list-item.is-matched {
-    opacity: 0.54;
-    text-decoration: line-through;
-}
-
 .warning-title {
     color: #ffd28c;
 }
@@ -794,25 +783,11 @@ button:disabled {
                     <h2 class="card-title">Destination</h2>
                     <div class="location-block">
                         <div class="label">1. Compare Location</div>
+                        <p class="selection-note">Give location where you want to compare your project files with to ignore from copying. When you click BACKUP PROJECT, files already existing here are ignored automatically.</p>
                         <div class="inline-path-row">
                             <button id="compareButton" class="button-compare" onclick="chooseCompareFolder()">Select Compare Location</button>
                             <div class="path-box" id="comparePath">No compare folder selected yet</div>
                         </div>
-                    </div>
-                </div>
-
-                <div>
-                    <div class="tree-toolbar">
-                        <button id="inspectCompareButton" class="button-inspect button-small" onclick="inspectCompareLocation()">Inspect Compare Location</button>
-                    </div>
-                    <div class="path-box" id="compareSummary">Select a compare location to see existing files. BACKUP PROJECT will compare automatically before copying.</div>
-                    <h2 class="card-title" style="margin-top: 14px;">Current Project Selection</h2>
-                    <div class="list-box compare-list-box">
-                        <ul class="result-list" id="currentCopyList"></ul>
-                    </div>
-                    <h2 class="card-title" style="margin-top: 14px;">Compare Location Files</h2>
-                    <div class="list-box compare-list-box" style="margin-top: 14px;">
-                        <ul class="result-list" id="compareFileList"></ul>
                     </div>
                 </div>
 

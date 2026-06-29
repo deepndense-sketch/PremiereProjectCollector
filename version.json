@@ -1,5 +1,5 @@
 {
-  "version": "3.0.3",
+  "version": "3.0.4",
   "channel": "main",
-  "notes": "Release 3.0.3 hardens ignored-track filtering so ignored media is removed from the copy-ready list before compare and backup."
+  "notes": "Release 3.0.4 simplifies the compare location UI while keeping automatic compare-and-skip during BACKUP PROJECT."
 }

@@ -1,5 +1,5 @@
 {
-  "version": "1.5.10",
+  "version": "2.0.0",
   "channel": "main",
-  "notes": "Release 1.5.10 starts selected-sequence media collection checked by default."
+  "notes": "Release 2.0.0 restores the Project Collector header, adds global refresh/reset controls, groups ignore tools cleanly, and returns Destination to the main workflow."
 }

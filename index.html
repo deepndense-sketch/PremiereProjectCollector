@@ -57,27 +57,13 @@ body {
 }
 
 .hero {
-    padding: 24px;
-}
-
-.eyebrow {
-    font-size: 12px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--accent-2);
-    margin-bottom: 10px;
+    padding: 20px;
 }
 
 h1 {
-    margin: 0 0 10px;
-    font-size: 34px;
+    margin: 0;
+    font-size: 28px;
     font-weight: 700;
-}
-
-.hero p,
-.meta,
-.label {
-    color: var(--muted);
 }
 
 .hero-top {
@@ -85,6 +71,19 @@ h1 {
     gap: 12px;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.meta,
+.label {
+    color: var(--muted);
 }
 
 .actions {
@@ -304,6 +303,20 @@ button:disabled {
     margin-top: 3px;
 }
 
+.embedded-section {
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    margin-top: 16px;
+}
+
+.embedded-title-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
 .filter-grid {
     display: grid;
     gap: 16px;
@@ -417,6 +430,12 @@ button:disabled {
     gap: 10px;
 }
 
+.folder-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+}
+
 .choice-item {
     display: grid;
     gap: 3px;
@@ -466,8 +485,9 @@ button:disabled {
 }
 
 .folder-button {
-    min-width: 130px;
-    max-width: 220px;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
     background: linear-gradient(180deg, #46505e, #38414c);
     border-color: #5a6779;
     color: #f3f6fb;
@@ -634,6 +654,10 @@ button:disabled {
     body {
         padding: 16px;
     }
+
+    .folder-choice-grid {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 <script src="js/CSInterface.js"></script>
@@ -642,17 +666,20 @@ button:disabled {
 <body>
 <div class="app">
     <section class="hero">
-        <div class="eyebrow">Premiere Pro Extension</div>
         <div class="hero-top">
             <h1>Project Collector</h1>
-            <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
+            <div class="header-actions">
+                <button class="button-secondary button-small" onclick="refreshEverything()">Refresh</button>
+                <button class="button-danger-soft button-small" onclick="resetEverything()">Reset</button>
+                <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
+            </div>
         </div>
     </section>
 
     <section class="grid">
         <div class="card full-width">
             <div class="section-header-row">
-                <h2 class="card-title" style="margin: 0;">Ignore Media On Tracks</h2>
+                <h2 class="card-title" style="margin: 0;">Ignore Medias</h2>
                 <button id="toggleIgnoreButton" class="button-secondary section-toggle" onclick="toggleIgnoreSection()">Hide</button>
             </div>
             <div id="ignoreSectionContent" style="display: block;">
@@ -664,6 +691,43 @@ button:disabled {
                 </div>
                 <div class="sequence-filter-stack" id="sequenceFilters"></div>
                 <div class="small-note" id="sequenceFilterHint">Nested sequence media is collected correctly even when a visible track count only reflects direct clips.</div>
+
+                <div class="embedded-section">
+                    <div class="embedded-title-row">
+                        <h2 class="card-title" style="margin: 0;">Ignore Premiere Project Folders</h2>
+                        <button id="toggleProjectFoldersButton" class="button-secondary section-toggle" onclick="toggleProjectFolderSection()">Show</button>
+                    </div>
+                    <div id="projectFolderSectionContent" style="display: none;">
+                        <p class="selection-note">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win over track choices; green bins force-copy over track choices. Double-click two bins to ignore the full range between them.</p>
+                        <div class="tree-toolbar">
+                            <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh Folders</button>
+                            <button class="button-danger-soft button-small" onclick="resetProjectFolderSelection()">Reset</button>
+                        </div>
+                        <div class="choice-grid folder-choice-grid" id="projectFolderFilters"></div>
+                        <div class="small-note" id="projectFolderHint">Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.</div>
+                    </div>
+                </div>
+
+                <div class="embedded-section">
+                    <div class="embedded-title-row">
+                        <h2 class="card-title" style="margin: 0;">Source File List</h2>
+                        <button id="toggleSourceSectionButton" class="button-secondary section-toggle" onclick="toggleSourceSection()">Show</button>
+                    </div>
+                    <div id="sourceSectionContent" style="display: none;">
+                        <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. The list opens at the root only; expanding a folder shows just the next level.</p>
+                        <div class="tree-toolbar">
+                            <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
+                            <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
+                            <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
+                            <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
+                        </div>
+                        <div class="path-box" id="selectionSummary">Loading project files from Premiere...</div>
+                        <div class="list-box tree-box" id="sourceListBox" style="margin-top: 14px;">
+                            <ul class="tree-list" id="sourceTree"></ul>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="option-stack" style="margin-top: 14px;">
                     <label class="option-row">
                         <input id="sequenceOnlyMode" type="checkbox" onchange="toggleSequenceOnlyMode()">
@@ -674,37 +738,6 @@ button:disabled {
                         <span>Create a reduced Premiere project from the chosen sequences after media copy finishes.</span>
                     </label>
                 </div>
-            </div>
-        </div>
-
-        <div class="card full-width">
-            <div class="section-header-row">
-                <h2 class="card-title" style="margin: 0;">Ignore Premiere Project Folders</h2>
-                <button id="toggleProjectFoldersButton" class="button-secondary section-toggle" onclick="toggleProjectFolderSection()">Show</button>
-            </div>
-            <div id="projectFolderSectionContent" style="display: none;">
-                <p class="selection-note" style="margin-top: 14px;">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win over track choices; green bins force-copy over track choices. Double-click two bins to ignore the full range between them.</p>
-                <div class="tree-toolbar">
-                    <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh Folders</button>
-                    <button class="button-danger-soft button-small" onclick="resetProjectFolderSelection()">Reset</button>
-                </div>
-                <div class="choice-grid" id="projectFolderFilters"></div>
-                <div class="small-note" id="projectFolderHint">Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.</div>
-            </div>
-        </div>
-
-        <div class="card full-width">
-            <h2 class="card-title">Source File List</h2>
-            <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. The list opens at the root only; expanding a folder shows just the next level.</p>
-            <div class="tree-toolbar">
-                <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
-                <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
-                <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
-                <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
-            </div>
-            <div class="path-box" id="selectionSummary">Loading project files from Premiere...</div>
-            <div class="list-box tree-box" id="sourceListBox" style="margin-top: 14px;">
-                <ul class="tree-list" id="sourceTree"></ul>
             </div>
         </div>
 
@@ -736,13 +769,13 @@ button:disabled {
                 <div>
                     <h2 class="card-title">Progress</h2>
                     <div class="status-box">
-                <div class="label">Current File</div>
-                <div class="status-line" id="currentFile">Waiting to start</div>
-                <div class="progress-track">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <div class="meta" id="progressText">0 / 0 files copied</div>
-                <div class="status-line" id="summaryText">Select a destination folder to build the project package.</div>
+                        <div class="label">Current File</div>
+                        <div class="status-line" id="currentFile">Waiting to start</div>
+                        <div class="progress-track">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="meta" id="progressText">0 / 0 files copied</div>
+                        <div class="status-line" id="summaryText">Select a destination folder to build the project package.</div>
                     </div>
                 </div>
             </div>

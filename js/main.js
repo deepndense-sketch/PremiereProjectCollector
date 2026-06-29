@@ -715,17 +715,12 @@ function scanCompareFiles(rootPath) {
 
 function buildCompareLookup(files) {
     const byNameAndSize = new Map();
-    const byName = new Map();
 
     (files || []).forEach((file) => {
         const fileName = getCompareFileName(file.name || file.path);
 
         if (!fileName) {
             return;
-        }
-
-        if (!byName.has(fileName)) {
-            byName.set(fileName, file);
         }
 
         if (Number.isFinite(Number(file.size))) {
@@ -737,7 +732,6 @@ function buildCompareLookup(files) {
     });
 
     return {
-        byName,
         byNameAndSize
     };
 }
@@ -753,15 +747,51 @@ function findCompareMatchForTask(task, lookup) {
         return null;
     }
 
-    if (signature.size !== null) {
-        const exactMatch = lookup.byNameAndSize.get(buildCompareSizeKey(signature.fileName, signature.size));
-        if (exactMatch) {
-            return exactMatch;
-        }
+    if (signature.size === null) {
         return null;
     }
 
-    return lookup.byName.get(signature.fileName) || null;
+    return lookup.byNameAndSize.get(buildCompareSizeKey(signature.fileName, signature.size)) || null;
+}
+
+function getTaskCompareLabel(task) {
+    const signature = getSourceCompareSignature(task.source);
+    const fileName = path.basename(task.source || task.name || 'Media');
+    const sizeText = signature.size === null ? 'unknown size' : formatBytes(signature.size);
+    return `${fileName} (${sizeText}) | ${task.source}`;
+}
+
+function renderCurrentCopyList(tasks, compareMatches) {
+    const list = document.getElementById('currentCopyList');
+
+    if (!list) {
+        return;
+    }
+
+    list.innerHTML = '';
+
+    if (!tasks || !tasks.length) {
+        const row = document.createElement('li');
+        row.className = 'list-empty';
+        row.textContent = 'No media is copy-ready after current sequence, track, folder, and source-list selections.';
+        list.appendChild(row);
+        return;
+    }
+
+    const matchedTasks = new Map();
+    (compareMatches || []).forEach((item) => {
+        matchedTasks.set(item.task, item.match);
+    });
+
+    tasks.forEach((task) => {
+        const row = document.createElement('li');
+        const match = matchedTasks.get(task);
+        row.className = `list-item${match ? ' is-matched' : ''}`;
+        row.textContent = match
+            ? `${getTaskCompareLabel(task)} -> already in compare location: ${match.path}`
+            : getTaskCompareLabel(task);
+        list.appendChild(row);
+    });
 }
 
 function renderCompareFiles(files, errors, blocked) {
@@ -791,9 +821,15 @@ function renderCompareFiles(files, errors, blocked) {
     );
 }
 
-async function inspectCompareLocation() {
+async function inspectCompareLocation(skipCurrentList) {
     if (!compareLocation) {
         renderCompareFiles([], [], false);
+        if (!skipCurrentList) {
+            const context = await buildCopyReadyContext();
+            if (context.ok) {
+                renderCurrentCopyList(context.selectedTasksBeforeCompare, []);
+            }
+        }
         return {
             files: [],
             errors: [],
@@ -807,10 +843,25 @@ async function inspectCompareLocation() {
 
     const scan = scanCompareFiles(compareLocation);
     renderCompareFiles(scan.files, scan.errors, scan.blocked);
-
-    return Object.assign({}, scan, {
+    const result = Object.assign({}, scan, {
         lookup: buildCompareLookup(scan.files)
     });
+
+    if (!skipCurrentList && !scan.blocked) {
+        const context = await buildCopyReadyContext();
+        if (context.ok) {
+            const matches = context.selectedTasksBeforeCompare
+                .map((task) => ({
+                    task,
+                    match: findCompareMatchForTask(task, result.lookup)
+                }))
+                .filter((item) => item.match);
+            renderCurrentCopyList(context.selectedTasksBeforeCompare, matches);
+            setText('compareSummary', `${scan.files.length} compare file${scan.files.length === 1 ? '' : 's'} checked against ${context.selectedTasksBeforeCompare.length} copy-ready project file${context.selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${matches.length} already exist and will be crossed out.`);
+        }
+    }
+
+    return result;
 }
 
 function splitSourcePath(filePath) {
@@ -1269,10 +1320,9 @@ function loadSequenceFilters() {
         const existing = selectedSequenceFilters[defaultIndex];
         existing.videoTrackUsage = defaultFilter.videoTrackUsage;
         existing.audioTrackUsage = defaultFilter.audioTrackUsage;
-        existing.locked = true;
-        if (defaultIndex !== 0) {
-            selectedSequenceFilters.splice(defaultIndex, 1);
-            selectedSequenceFilters.unshift(existing);
+        existing.sequenceID = defaultFilter.sequenceID || existing.sequenceID;
+        if (defaultIndex === 0) {
+            existing.locked = true;
         }
     }
 
@@ -2269,33 +2319,18 @@ function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ig
     return '';
 }
 
-async function collect() {
-    if (isCopying) {
-        return;
-    }
-
-    if (!destination) {
-        alert('Select destination first');
-        return;
-    }
-
-    resetResults();
-    setBusyState(true);
-    setText('summaryText', 'Loading Premiere host script...');
+async function buildCopyReadyContext() {
+    setText('summaryText', 'Reading Premiere project structure...');
 
     const hostLoaded = await ensureHostScriptLoaded();
     if (!hostLoaded) {
-        setBusyState(false);
-        return;
+        return { ok: false };
     }
-
-    setText('summaryText', 'Reading Premiere project structure...');
 
     if (!latestPlan || !sourceTree) {
         const planLoaded = await loadProjectPlan();
         if (!planLoaded || !latestPlan) {
-            setBusyState(false);
-            return;
+            return { ok: false };
         }
     }
 
@@ -2311,16 +2346,14 @@ async function collect() {
     if (sequenceOnlyMode) {
         if (!filtersPayload.length) {
             alert('Add at least one sequence before using selected-sequence collection mode.');
-            setBusyState(false);
-            return;
+            return { ok: false };
         }
 
         const scopedRaw = await callHost(`getSequenceScopedMediaPlan("${escapeForEvalScript(JSON.stringify(filtersPayload))}")`);
         const scopedPlan = safeJsonParse(scopedRaw);
         if (!scopedPlan || scopedPlan.error) {
-            setBusyState(false);
             setText('summaryText', scopedPlan && scopedPlan.error ? scopedPlan.error : `Could not build the selected-sequence media plan. Raw response: ${scopedRaw}`);
-            return;
+            return { ok: false };
         }
 
         sequenceScopedMediaSet = new Set((scopedPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
@@ -2328,6 +2361,44 @@ async function collect() {
     }
 
     const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet));
+
+    return {
+        ok: true,
+        treeSelectedTaskSet,
+        ignoredMediaSet,
+        copyWarnings,
+        sequenceScopedMediaSet,
+        sequenceScopeInfo,
+        selectedTasksBeforeCompare
+    };
+}
+
+async function collect() {
+    if (isCopying) {
+        return;
+    }
+
+    if (!destination) {
+        alert('Select destination first');
+        return;
+    }
+
+    resetResults();
+    setBusyState(true);
+    setText('summaryText', 'Loading Premiere host script...');
+
+    const context = await buildCopyReadyContext();
+    if (!context.ok) {
+        setBusyState(false);
+        return;
+    }
+
+    const treeSelectedTaskSet = context.treeSelectedTaskSet;
+    const ignoredMediaSet = context.ignoredMediaSet;
+    const copyWarnings = context.copyWarnings;
+    const sequenceScopedMediaSet = context.sequenceScopedMediaSet;
+    const sequenceScopeInfo = context.sequenceScopeInfo;
+    const selectedTasksBeforeCompare = context.selectedTasksBeforeCompare;
 
     let compareInfo = {
         files: [],
@@ -2339,7 +2410,7 @@ async function collect() {
 
     if (compareLocation) {
         setText('currentFile', 'Inspecting compare location');
-        compareInfo = await inspectCompareLocation();
+        compareInfo = await inspectCompareLocation(true);
 
         if (compareInfo.blocked) {
             setBusyState(false);
@@ -2369,6 +2440,7 @@ async function collect() {
     if (compareLocation) {
         setText('compareSummary', `${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked against ${selectedTasksBeforeCompare.length} copy-ready project file${selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${compareMatches.length} already exist and will be skipped.`);
     }
+    renderCurrentCopyList(selectedTasksBeforeCompare, compareMatches);
 
     const rootPath = path.join(destination, latestPlan.projectName);
     const plan = {
@@ -2570,6 +2642,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     } catch (error) {}
     renderList('compareFileList', [], null, compareLocation ? 'Compare location has not been inspected yet.' : 'No compare location selected.');
+    renderCurrentCopyList([], []);
 
     document.getElementById('sourceListBox').style.display = 'none';
     setText('showListButton', 'Show List');

@@ -1,5 +1,5 @@
 {
-  "version": "3.0.1",
+  "version": "3.0.2",
   "channel": "main",
-  "notes": "Release 3.0.1 makes compare and backup use only the final reduced media list after ignored tracks and sequence selection are applied."
+  "notes": "Release 3.0.2 makes compare strictly use filename plus size on the final copy-ready list, keeps added sequences in place, and improves compare controls."
 }

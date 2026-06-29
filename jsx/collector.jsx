@@ -269,12 +269,14 @@ function pcSequenceInfoJson(items) {
 
 function pcBuildSequenceMap() {
     var sequenceMap = {};
+    var nameMap = {};
     var nodeMap = {};
     var i;
 
     if (!app || !app.project || !app.project.sequences) {
         return {
             bySequenceID: sequenceMap,
+            bySequenceName: nameMap,
             byNodeId: nodeMap
         };
     }
@@ -292,6 +294,12 @@ function pcBuildSequenceMap() {
         } catch (e) {}
 
         try {
+            if (sequence.name) {
+                nameMap[String(sequence.name).toLowerCase()] = sequence;
+            }
+        } catch (eName) {}
+
+        try {
             if (sequence.projectItem && sequence.projectItem.nodeId) {
                 nodeMap[sequence.projectItem.nodeId] = sequence;
             }
@@ -300,8 +308,25 @@ function pcBuildSequenceMap() {
 
     return {
         bySequenceID: sequenceMap,
+        bySequenceName: nameMap,
         byNodeId: nodeMap
     };
+}
+
+function pcFindSequenceFromFilter(filter, sequenceMaps) {
+    if (!filter || !sequenceMaps) {
+        return null;
+    }
+
+    if (filter.sequenceID && sequenceMaps.bySequenceID && sequenceMaps.bySequenceID[filter.sequenceID]) {
+        return sequenceMaps.bySequenceID[filter.sequenceID];
+    }
+
+    if (filter.sequenceName && sequenceMaps.bySequenceName) {
+        return sequenceMaps.bySequenceName[String(filter.sequenceName).toLowerCase()] || null;
+    }
+
+    return null;
 }
 
 function pcFindSequenceByProjectItem(projectItem, sequenceMaps) {
@@ -336,20 +361,31 @@ function pcParseJsonArray(raw) {
     return [];
 }
 
-function pcBuildFilterMap(filters) {
+function pcBuildFilterMap(filters, sequenceMaps) {
     var map = {};
     var i;
 
     for (i = 0; i < filters.length; i++) {
         var filter = filters[i];
-        if (!filter || !filter.sequenceID) {
+        var sequence = pcFindSequenceFromFilter(filter, sequenceMaps);
+        var sequenceID = '';
+
+        if (!filter || !sequence) {
             continue;
         }
 
-        map[filter.sequenceID] = {
-            ignoredVideoTracks: filter.ignoredVideoTracks || [],
-            ignoredAudioTracks: filter.ignoredAudioTracks || []
-        };
+        try {
+            sequenceID = sequence.sequenceID || filter.sequenceID || '';
+        } catch (e) {
+            sequenceID = filter.sequenceID || '';
+        }
+
+        if (sequenceID) {
+            map[sequenceID] = {
+                ignoredVideoTracks: filter.ignoredVideoTracks || [],
+                ignoredAudioTracks: filter.ignoredAudioTracks || []
+            };
+        }
     }
 
     return map;
@@ -630,7 +666,7 @@ function pcCollectIgnoredTrackMedia(sequence, filter, sequenceMaps, visitedSeque
 
 function pcBuildSequenceScopedPlan(filters) {
     var sequenceMaps = pcBuildSequenceMap();
-    var filterMap = pcBuildFilterMap(filters);
+    var filterMap = pcBuildFilterMap(filters, sequenceMaps);
     var visitedMap = {};
     var mediaMap = {};
     var mediaPaths = [];
@@ -644,16 +680,21 @@ function pcBuildSequenceScopedPlan(filters) {
         var filter = filters[i];
         var sequence = null;
 
-        if (!filter || !filter.sequenceID) {
+        if (!filter) {
             continue;
         }
 
-        selectedSequenceIDs.push(filter.sequenceID);
-        sequence = sequenceMaps.bySequenceID[filter.sequenceID];
+        sequence = pcFindSequenceFromFilter(filter, sequenceMaps);
 
         if (!sequence) {
             missingSequences.push(filter.sequenceName || filter.sequenceID);
             continue;
+        }
+
+        try {
+            selectedSequenceIDs.push(sequence.sequenceID || filter.sequenceID);
+        } catch (eSequenceID) {
+            selectedSequenceIDs.push(filter.sequenceID);
         }
 
         pcCollectSequenceMedia(sequence, filterMap, sequenceMaps, visitedMap, mediaMap, mediaPaths, includedSequenceMap, includedSequences);
@@ -679,11 +720,11 @@ function pcBuildIgnoredTrackMediaPlan(filters) {
         var filter = filters[i];
         var sequence = null;
 
-        if (!filter || !filter.sequenceID) {
+        if (!filter) {
             continue;
         }
 
-        sequence = sequenceMaps.bySequenceID[filter.sequenceID];
+        sequence = pcFindSequenceFromFilter(filter, sequenceMaps);
         if (!sequence) {
             missingSequences.push(filter.sequenceName || filter.sequenceID);
             continue;

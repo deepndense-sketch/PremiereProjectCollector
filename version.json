@@ -1,5 +1,5 @@
 {
-  "version": "3.0.5",
+  "version": "3.0.6",
   "channel": "main",
-  "notes": "Release 3.0.5 renames Compare Location to Skip Existing Medias, keeps it empty on load, and skips that step when no location is selected."
+  "notes": "Release 3.0.6 renames the Premiere folder section title without changing behavior."
 }

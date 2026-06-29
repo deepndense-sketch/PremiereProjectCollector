@@ -19,6 +19,12 @@ if (-not $Destination -or -not $Destination.Trim()) {
     $Destination = Join-Path $env:APPDATA "Adobe\CEP\extensions\PremiereProjectCollector"
 }
 
+$Destination = [System.IO.Path]::GetFullPath($Destination)
+
+if ((Split-Path -Leaf $Destination) -ne "PremiereProjectCollector") {
+    throw "Update destination must be a PremiereProjectCollector extension folder: $Destination"
+}
+
 function Write-Step($message) {
     Write-Host "[Project Collector Updater] $message"
     Add-Content -Path $LogPath -Value ("[STEP] " + $message)

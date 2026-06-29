@@ -202,6 +202,10 @@ function getUserCepExtensionPath() {
     return path.join(process.env.APPDATA || '', 'Adobe', 'CEP', 'extensions', 'PremiereProjectCollector');
 }
 
+function getInstalledExtensionPath() {
+    return getExtensionRootPath() || getUserCepExtensionPath();
+}
+
 function fileExists(filePath) {
     try {
         return !!filePath && fs.existsSync(filePath);
@@ -428,7 +432,8 @@ function runGithubUpdate() {
         .then(() => {
             const escapedScriptPath = tempUpdaterScriptPath.replace(/'/g, "''");
             const escapedZipPath = tempUpdaterZipPath.replace(/'/g, "''");
-            const destination = getUserCepExtensionPath().replace(/'/g, "''");
+            const updateDestination = getInstalledExtensionPath();
+            const destination = updateDestination.replace(/'/g, "''");
             const escapedResultPath = tempUpdaterResultPath.replace(/'/g, "''");
             const escapedLogPath = tempUpdaterLogPath.replace(/'/g, "''");
             const command = `Start-Process PowerShell -Verb RunAs -ArgumentList '-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-File','${escapedScriptPath}','-ZipPath','${escapedZipPath}','-Destination','${destination}','-ResultPath','${escapedResultPath}','-LogPath','${escapedLogPath}'`;
@@ -442,7 +447,7 @@ function runGithubUpdate() {
                         return;
                     }
 
-                    setText('summaryText', `Updater launched for ${getUserCepExtensionPath()}. Accept the Windows prompt if it appears.`);
+                    setText('summaryText', `Updater launched for ${updateDestination}. Accept the Windows prompt if it appears.`);
                     monitorUpdaterCompletion();
                 }
             );

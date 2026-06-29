@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "channel": "main",
-  "notes": "Release 2.1.0 publishes the Project Collector V2 layout and media filtering updates."
+  "notes": "Release 2.1.1 makes GitHub updates install into the currently running CEP extension folder."
 }

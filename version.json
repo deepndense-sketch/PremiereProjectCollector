@@ -1,5 +1,5 @@
 {
-  "version": "2.1.2",
+  "version": "2.1.3",
   "channel": "main",
-  "notes": "Release 2.1.2 keeps refresh/reset scoped to track selection and makes root-bin buttons size to their text."
+  "notes": "Release 2.1.3 gives the Destination section a dark blue background with purple action buttons."
 }

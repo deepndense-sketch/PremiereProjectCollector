@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "channel": "main",
-  "notes": "Release 2.0.0 restores the Project Collector header, adds global refresh/reset controls, groups ignore tools cleanly, and returns Destination to the main workflow."
+  "notes": "Release 2.1.0 publishes the Project Collector V2 layout and media filtering updates."
 }

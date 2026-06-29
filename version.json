@@ -1,5 +1,5 @@
 {
-  "version": "3.0.0",
+  "version": "3.0.1",
   "channel": "main",
-  "notes": "Release 3.0.0 adds separate backup and compare locations, scans compare folders recursively, and skips media already found before BACKUP PROJECT copies."
+  "notes": "Release 3.0.1 makes compare and backup use only the final reduced media list after ignored tracks and sequence selection are applied."
 }

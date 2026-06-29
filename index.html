@@ -730,7 +730,7 @@ button:disabled {
                         <button id="toggleProjectFoldersButton" class="button-secondary section-toggle" onclick="toggleProjectFolderSection()">Show</button>
                     </div>
                     <div id="projectFolderSectionContent" style="display: none;">
-                        <p class="selection-note">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win over track choices; green bins force-copy over track choices. Double-click two bins to ignore the full range between them.</p>
+                        <p class="selection-note">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win first; green bins force-copy only inside the reduced sequence and track selection. Double-click two bins to ignore the full range between them.</p>
                         <div class="tree-toolbar">
                             <button class="button-danger-soft button-small" onclick="resetProjectFolderSelection()">Reset</button>
                         </div>

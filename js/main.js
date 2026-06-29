@@ -1813,7 +1813,7 @@ function renderProjectFolderFilters() {
         const includedCount = includedProjectFolders.length;
         const skippedCount = ignoredProjectFolders.length;
         if (includedCount || skippedCount) {
-            hint.textContent = `${includedCount} force-copy folder${includedCount === 1 ? '' : 's'}, ${skippedCount} ignored folder${skippedCount === 1 ? '' : 's'}. Ignored bins win first; green bins copy even when track choices would skip them.`;
+            hint.textContent = `${includedCount} force-copy folder${includedCount === 1 ? '' : 's'}, ${skippedCount} ignored folder${skippedCount === 1 ? '' : 's'}. Ignored bins win first; green bins only force-copy inside the reduced sequence and track selection.`;
         } else {
             hint.textContent = 'Neutral root bins add no rule. Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.';
         }
@@ -2243,6 +2243,32 @@ function buildLinkProjectTasks(copiedTasks) {
     }));
 }
 
+function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet) {
+    const mediaKey = normalizeMediaKey(task.source);
+
+    if (isTaskInsideIgnoredProjectFolder(task)) {
+        return `skipped because Premiere folder "${task.binPath}" is ignored`;
+    }
+
+    if (sequenceScopedMediaSet && !sequenceScopedMediaSet.has(mediaKey)) {
+        return 'skipped because it is not used by the chosen sequences';
+    }
+
+    if (ignoredMediaSet.has(mediaKey)) {
+        return 'skipped by ignored track selection';
+    }
+
+    if (isTaskInsideIncludedProjectFolder(task)) {
+        return '';
+    }
+
+    if (!treeSelectedTaskSet.has(task)) {
+        return 'skipped by Source File List selection';
+    }
+
+    return '';
+}
+
 async function collect() {
     if (isCopying) {
         return;
@@ -2301,32 +2327,7 @@ async function collect() {
         sequenceScopeInfo = scopedPlan;
     }
 
-    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => {
-        const mediaKey = normalizeMediaKey(task.source);
-        const insideIncludedFolder = isTaskInsideIncludedProjectFolder(task);
-
-        if (isTaskInsideIgnoredProjectFolder(task)) {
-            return false;
-        }
-
-        if (insideIncludedFolder) {
-            return true;
-        }
-
-        if (!treeSelectedTaskSet.has(task)) {
-            return false;
-        }
-
-        if (sequenceScopedMediaSet && !sequenceScopedMediaSet.has(mediaKey)) {
-            return false;
-        }
-
-        if (ignoredMediaSet.has(mediaKey)) {
-            return false;
-        }
-
-        return true;
-    });
+    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet));
 
     let compareInfo = {
         files: [],
@@ -2366,7 +2367,7 @@ async function collect() {
     });
 
     if (compareLocation) {
-        setText('compareSummary', `${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked against ${selectedTasksBeforeCompare.length} selected project file${selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${compareMatches.length} already exist and will be skipped.`);
+        setText('compareSummary', `${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked against ${selectedTasksBeforeCompare.length} copy-ready project file${selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${compareMatches.length} already exist and will be skipped.`);
     }
 
     const rootPath = path.join(destination, latestPlan.projectName);
@@ -2394,30 +2395,10 @@ async function collect() {
     const skippedItems = [];
 
     (latestPlan.tasks || []).forEach((task) => {
-        const mediaKey = normalizeMediaKey(task.source);
-        const insideIncludedFolder = isTaskInsideIncludedProjectFolder(task);
+        const skipReason = getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet);
 
-        if (isTaskInsideIgnoredProjectFolder(task)) {
-            skippedItems.push(`${task.source} -> skipped because Premiere folder "${task.binPath}" is ignored`);
-            return;
-        }
-
-        if (insideIncludedFolder) {
-            return;
-        }
-
-        if (!treeSelectedTaskSet.has(task)) {
-            skippedItems.push(`${task.source} -> skipped by Source File List selection`);
-            return;
-        }
-
-        if (sequenceScopedMediaSet && !sequenceScopedMediaSet.has(mediaKey)) {
-            skippedItems.push(`${task.source} -> skipped because it is not used by the chosen sequences`);
-            return;
-        }
-
-        if (ignoredMediaSet.has(mediaKey)) {
-            skippedItems.push(`${task.source} -> skipped by ignored track selection`);
+        if (skipReason) {
+            skippedItems.push(`${task.source} -> ${skipReason}`);
         }
     });
 

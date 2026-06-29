@@ -620,6 +620,16 @@ function getSourceCompareSignature(filePath) {
     };
 }
 
+function buildMediaSignatureKey(filePath) {
+    const signature = getSourceCompareSignature(filePath);
+
+    if (!signature.fileName || signature.size === null) {
+        return '';
+    }
+
+    return buildCompareSizeKey(signature.fileName, signature.size);
+}
+
 function scanCompareFiles(rootPath) {
     const root = normalizePathForTree(rootPath);
     const files = [];
@@ -1657,14 +1667,29 @@ function removeSequenceFilter(sequenceKey) {
     renderSequenceFilters();
 }
 
-function buildIgnoredMediaSet() {
-    const ignoredPaths = new Set();
+function buildIgnoredMediaPathsFromSelection() {
+    const ignoredPaths = [];
+    const seen = new Set();
+
+    function addIgnoredPath(mediaPath) {
+        if (!mediaPath) {
+            return;
+        }
+
+        const key = normalizeMediaKey(mediaPath);
+        if (seen.has(key)) {
+            return;
+        }
+
+        seen.add(key);
+        ignoredPaths.push(mediaPath);
+    }
 
     selectedSequenceFilters.forEach((filter) => {
         (filter.videoTrackUsage || []).forEach((entry) => {
             if (filter.ignoredVideoTracks.indexOf(entry.trackNumber) !== -1) {
                 (entry.mediaPaths || []).forEach((mediaPath) => {
-                    ignoredPaths.add(normalizeMediaKey(mediaPath));
+                    addIgnoredPath(mediaPath);
                 });
             }
         });
@@ -1672,13 +1697,17 @@ function buildIgnoredMediaSet() {
         (filter.audioTrackUsage || []).forEach((entry) => {
             if (filter.ignoredAudioTracks.indexOf(entry.trackNumber) !== -1) {
                 (entry.mediaPaths || []).forEach((mediaPath) => {
-                    ignoredPaths.add(normalizeMediaKey(mediaPath));
+                    addIgnoredPath(mediaPath);
                 });
             }
         });
     });
 
     return ignoredPaths;
+}
+
+function buildIgnoredMediaSet() {
+    return new Set(buildIgnoredMediaPathsFromSelection().map((mediaPath) => normalizeMediaKey(mediaPath)));
 }
 
 function getProjectFolderEntries() {
@@ -2259,31 +2288,55 @@ function hasIgnoredTracks(filtersPayload) {
 }
 
 async function buildIgnoredMediaSetForCopy(filtersPayload) {
-    const fallbackIgnoredMedia = buildIgnoredMediaSet();
+    const ignoredPaths = buildIgnoredMediaPathsFromSelection();
+    const addIgnoredPaths = (mediaPaths) => {
+        (mediaPaths || []).forEach((mediaPath) => {
+            if (mediaPath) {
+                ignoredPaths.push(mediaPath);
+            }
+        });
+    };
+    const buildIgnoredInfo = (warning) => {
+        const ignoredMediaSet = new Set();
+        const ignoredSignatureSet = new Set();
+
+        ignoredPaths.forEach((mediaPath) => {
+            ignoredMediaSet.add(normalizeMediaKey(mediaPath));
+            const signatureKey = buildMediaSignatureKey(mediaPath);
+            if (signatureKey) {
+                ignoredSignatureSet.add(signatureKey);
+            }
+        });
+
+        return {
+            ignoredMediaSet,
+            ignoredSignatureSet,
+            warning: warning || ''
+        };
+    };
 
     if (!hasIgnoredTracks(filtersPayload)) {
-        return {
-            ignoredMediaSet: fallbackIgnoredMedia,
-            warning: ''
-        };
+        return buildIgnoredInfo('');
     }
 
     const ignoredRaw = await callHost(`getIgnoredTrackMediaPlan("${escapeForEvalScript(JSON.stringify(filtersPayload))}")`);
     const ignoredPlan = safeJsonParse(ignoredRaw);
 
     if (!ignoredPlan || ignoredPlan.error) {
-        return {
-            ignoredMediaSet: fallbackIgnoredMedia,
-            warning: ignoredPlan && ignoredPlan.error
+        return buildIgnoredInfo(
+            ignoredPlan && ignoredPlan.error
                 ? `Ignored track nested-media check failed: ${ignoredPlan.error}`
                 : `Ignored track nested-media check failed. Raw response: ${ignoredRaw}`
-        };
+        );
     }
 
-    return {
-        ignoredMediaSet: new Set((ignoredPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath))),
-        warning: ''
-    };
+    addIgnoredPaths(ignoredPlan.mediaPaths || []);
+
+    const missingWarning = Array.isArray(ignoredPlan.missingSequences) && ignoredPlan.missingSequences.length
+        ? `Ignored track check could not match sequence${ignoredPlan.missingSequences.length === 1 ? '' : 's'}: ${ignoredPlan.missingSequences.join(', ')}`
+        : '';
+
+    return buildIgnoredInfo(missingWarning);
 }
 
 function buildLinkProjectTasks(copiedTasks) {
@@ -2293,7 +2346,18 @@ function buildLinkProjectTasks(copiedTasks) {
     }));
 }
 
-function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet) {
+function isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet) {
+    const mediaKey = normalizeMediaKey(task.source);
+
+    if (ignoredMediaSet.has(mediaKey)) {
+        return true;
+    }
+
+    const signatureKey = buildMediaSignatureKey(task.source);
+    return !!signatureKey && ignoredSignatureSet.has(signatureKey);
+}
+
+function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet) {
     const mediaKey = normalizeMediaKey(task.source);
 
     if (isTaskInsideIgnoredProjectFolder(task)) {
@@ -2304,7 +2368,7 @@ function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ig
         return 'skipped because it is not used by the chosen sequences';
     }
 
-    if (ignoredMediaSet.has(mediaKey)) {
+    if (isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet)) {
         return 'skipped by ignored track selection';
     }
 
@@ -2339,6 +2403,7 @@ async function buildCopyReadyContext() {
     const filtersPayload = buildSequenceFiltersPayload().filter((filter) => filter.sequenceID || filter.sequenceName);
     const ignoredMediaInfo = await buildIgnoredMediaSetForCopy(filtersPayload);
     const ignoredMediaSet = ignoredMediaInfo.ignoredMediaSet;
+    const ignoredSignatureSet = ignoredMediaInfo.ignoredSignatureSet;
     const copyWarnings = ignoredMediaInfo.warning ? [ignoredMediaInfo.warning] : [];
     let sequenceScopedMediaSet = null;
     let sequenceScopeInfo = null;
@@ -2360,12 +2425,13 @@ async function buildCopyReadyContext() {
         sequenceScopeInfo = scopedPlan;
     }
 
-    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet));
+    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet));
 
     return {
         ok: true,
         treeSelectedTaskSet,
         ignoredMediaSet,
+        ignoredSignatureSet,
         copyWarnings,
         sequenceScopedMediaSet,
         sequenceScopeInfo,
@@ -2395,6 +2461,7 @@ async function collect() {
 
     const treeSelectedTaskSet = context.treeSelectedTaskSet;
     const ignoredMediaSet = context.ignoredMediaSet;
+    const ignoredSignatureSet = context.ignoredSignatureSet;
     const copyWarnings = context.copyWarnings;
     const sequenceScopedMediaSet = context.sequenceScopedMediaSet;
     const sequenceScopeInfo = context.sequenceScopeInfo;
@@ -2467,7 +2534,7 @@ async function collect() {
     const skippedItems = [];
 
     (latestPlan.tasks || []).forEach((task) => {
-        const skipReason = getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet);
+        const skipReason = getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet);
 
         if (skipReason) {
             skippedItems.push(`${task.source} -> ${skipReason}`);

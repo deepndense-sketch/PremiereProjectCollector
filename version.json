@@ -1,5 +1,5 @@
 {
-  "version": "2.1.5",
+  "version": "2.1.6",
   "channel": "main",
-  "notes": "Release 2.1.5 softens the Destination section styling and keeps Select Destination on the standard button color."
+  "notes": "Release 2.1.6 adds one top-level Refresh Project action and cleans Premiere folder selection into a single vertical list."
 }

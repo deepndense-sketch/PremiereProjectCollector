@@ -1240,7 +1240,7 @@ function renderSequenceFilters() {
         const subtitle = document.createElement('div');
         subtitle.className = 'sequence-subtitle';
         subtitle.textContent = filter.locked
-            ? 'Current active sequence loaded by default. Use Refresh Tracks after changing it in Premiere.'
+            ? 'Current active sequence loaded by default. Use Refresh Project after changing it in Premiere.'
             : 'Added from another active sequence. Remove it anytime if you no longer want its track filters.';
         titleWrap.appendChild(subtitle);
         header.appendChild(titleWrap);
@@ -1265,7 +1265,7 @@ function renderSequenceFilters() {
         container.appendChild(card);
     });
 
-    hint.textContent = 'Nested sequence media is collected correctly even when a visible track count only reflects direct clips. Refresh updates track counts and keeps your green/faded choices.';
+    hint.textContent = 'Nested sequence media is collected correctly even when a visible track count only reflects direct clips. Refresh Project updates counts and keeps your green/faded choices.';
     updateSelectionSummary();
 }
 
@@ -1732,6 +1732,30 @@ async function refreshSourceList() {
     await loadProjectPlan();
 }
 
+async function refreshProject() {
+    if (isCopying) {
+        return;
+    }
+
+    const refreshButton = document.getElementById('refreshProjectButton');
+    if (refreshButton) {
+        refreshButton.disabled = true;
+    }
+
+    try {
+        setText('summaryText', 'Refreshing project from Premiere...');
+        setText('selectionSummary', 'Refreshing project files from Premiere...');
+        const refreshed = await loadProjectPlan();
+        if (refreshed) {
+            setText('summaryText', 'Project refreshed. Tracks, Premiere folders, and source files are up to date.');
+        }
+    } finally {
+        if (refreshButton) {
+            refreshButton.disabled = false;
+        }
+    }
+}
+
 async function copyFileWithRobocopy(source, destinationPath) {
     return new Promise((resolve) => {
         try {
@@ -1806,6 +1830,10 @@ function setBusyState(busy) {
     isCopying = busy;
     document.getElementById('chooseButton').disabled = busy;
     document.getElementById('collectButton').disabled = busy;
+    const refreshButton = document.getElementById('refreshProjectButton');
+    if (refreshButton) {
+        refreshButton.disabled = busy;
+    }
     document.getElementById('updateButton').disabled = busy || !(remoteVersion && compareVersions(remoteVersion, localVersion) > 0);
 }
 

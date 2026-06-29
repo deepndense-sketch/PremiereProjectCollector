@@ -442,9 +442,21 @@ button:disabled {
 }
 
 .folder-choice-grid {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
     align-items: start;
+}
+
+.folder-choice-grid .choice-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-items: start;
+}
+
+.folder-choice-grid .choice-meta {
+    text-align: left;
 }
 
 .choice-item {
@@ -677,6 +689,7 @@ button:disabled {
         <div class="hero-top">
             <h1>Project Collector</h1>
             <div class="header-actions">
+                <button id="refreshProjectButton" class="button-secondary button-small" onclick="refreshProject()">Refresh Project</button>
                 <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
             </div>
         </div>
@@ -692,7 +705,6 @@ button:disabled {
                 <p class="selection-note" style="margin-top: 14px;">Green tracks are included. Single-click a track to fade it and ignore its media. Double-click one track, then double-click another track in the same group to ignore that full range.</p>
                 <div class="tree-toolbar">
                     <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
-                    <button class="button-secondary button-small" onclick="refreshTrackSelection()">Refresh Tracks</button>
                     <button class="button-danger-soft button-small" onclick="resetTrackSelection()">Reset</button>
                 </div>
                 <div class="sequence-filter-stack" id="sequenceFilters"></div>
@@ -706,7 +718,6 @@ button:disabled {
                     <div id="projectFolderSectionContent" style="display: none;">
                         <p class="selection-note">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win over track choices; green bins force-copy over track choices. Double-click two bins to ignore the full range between them.</p>
                         <div class="tree-toolbar">
-                            <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh Folders</button>
                             <button class="button-danger-soft button-small" onclick="resetProjectFolderSelection()">Reset</button>
                         </div>
                         <div class="choice-grid folder-choice-grid" id="projectFolderFilters"></div>
@@ -723,7 +734,6 @@ button:disabled {
                         <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. The list opens at the root only; expanding a folder shows just the next level.</p>
                         <div class="tree-toolbar">
                             <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
-                            <button class="button-secondary button-small" onclick="refreshSourceList()">Refresh List</button>
                             <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
                             <button class="button-secondary button-small" onclick="setAllSelections(false)">Skip All</button>
                         </div>

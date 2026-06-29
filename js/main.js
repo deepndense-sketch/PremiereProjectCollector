@@ -1712,16 +1712,6 @@ async function refreshSourceList() {
     await loadProjectPlan();
 }
 
-async function refreshEverything() {
-    if (isCopying) {
-        return;
-    }
-
-    setText('summaryText', 'Refreshing Premiere project data...');
-    await refreshSourceList();
-    setText('summaryText', 'Refresh complete.');
-}
-
 async function copyFileWithRobocopy(source, destinationPath) {
     return new Promise((resolve) => {
         try {
@@ -1829,46 +1819,6 @@ function resetResults() {
     document.getElementById('progressFill').style.width = '0%';
     document.getElementById('errorList').innerHTML = '';
     document.getElementById('missingList').innerHTML = '';
-}
-
-async function resetEverything() {
-    if (isCopying) {
-        return;
-    }
-
-    selectedSequenceFilters = [];
-    includedProjectFolders = [];
-    ignoredProjectFolders = [];
-    trackRangeAnchor = null;
-    folderRangeAnchor = null;
-    selectionTouched = false;
-    listVisible = false;
-    sequenceOnlyMode = true;
-    createReducedProject = false;
-    copyProjectFile = true;
-    linkProjectAfterCollection = false;
-
-    try {
-        localStorage.removeItem(SEQUENCE_FILTERS_STORAGE_KEY);
-        localStorage.setItem(SEQUENCE_ONLY_MODE_STORAGE_KEY, '1');
-        localStorage.setItem(CREATE_REDUCED_PROJECT_STORAGE_KEY, '0');
-        localStorage.setItem(COPY_PROJECT_FILE_STORAGE_KEY, '1');
-        localStorage.setItem(LINK_PROJECT_AFTER_COLLECTION_STORAGE_KEY, '0');
-    } catch (error) {}
-
-    setSourceSectionVisibility(false);
-    setProjectFolderSectionVisibility(false);
-    const sourceListBox = document.getElementById('sourceListBox');
-    if (sourceListBox) {
-        sourceListBox.style.display = 'none';
-    }
-    setText('showListButton', 'Show List');
-    syncSequenceModeUI();
-    syncProjectOptionUI();
-    resetResults();
-    setText('summaryText', 'Reset complete. Loading fresh Premiere project data...');
-    await loadProjectPlan();
-    setText('summaryText', 'Reset complete. Select a destination folder to build the project package.');
 }
 
 function toggleSourceList() {

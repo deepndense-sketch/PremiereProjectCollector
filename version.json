@@ -1,5 +1,5 @@
 {
-  "version": "2.1.1",
+  "version": "2.1.2",
   "channel": "main",
-  "notes": "Release 2.1.1 makes GitHub updates install into the currently running CEP extension folder."
+  "notes": "Release 2.1.2 keeps refresh/reset scoped to track selection and makes root-bin buttons size to their text."
 }

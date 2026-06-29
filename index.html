@@ -431,8 +431,8 @@ button:disabled {
 }
 
 .folder-choice-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     align-items: start;
 }
 
@@ -485,7 +485,7 @@ button:disabled {
 }
 
 .folder-button {
-    width: 100%;
+    width: auto;
     min-width: 0;
     max-width: none;
     background: linear-gradient(180deg, #46505e, #38414c);
@@ -655,9 +655,6 @@ button:disabled {
         padding: 16px;
     }
 
-    .folder-choice-grid {
-        grid-template-columns: 1fr;
-    }
 }
 </style>
 <script src="js/CSInterface.js"></script>
@@ -669,8 +666,6 @@ button:disabled {
         <div class="hero-top">
             <h1>Project Collector</h1>
             <div class="header-actions">
-                <button class="button-secondary button-small" onclick="refreshEverything()">Refresh</button>
-                <button class="button-danger-soft button-small" onclick="resetEverything()">Reset</button>
                 <button id="updateButton" class="button-secondary" onclick="runGithubUpdate()">Version ...</button>
             </div>
         </div>

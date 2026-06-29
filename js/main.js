@@ -32,7 +32,6 @@ let folderClickTimer = null;
 
 const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
 const DESTINATION_STORAGE_KEY = 'projectcollector.destination';
-const COMPARE_LOCATION_STORAGE_KEY = 'projectcollector.compareLocation';
 const IGNORE_SECTION_VISIBLE_STORAGE_KEY = 'projectcollector.ignoreSectionVisible';
 const SEQUENCE_ONLY_MODE_STORAGE_KEY = 'projectcollector.sequenceOnlyMode';
 const CREATE_REDUCED_PROJECT_STORAGE_KEY = 'projectcollector.createReducedProject';
@@ -639,7 +638,7 @@ function scanCompareFiles(rootPath) {
     if (!root) {
         return {
             files,
-            errors: ['No compare location selected.'],
+            errors: ['No skip location selected.'],
             blocked: true
         };
     }
@@ -2172,16 +2171,13 @@ async function chooseCompareFolder() {
         return;
     }
 
-    const result = window.cep.fs.showOpenDialogEx(false, true, 'Select Compare Folder');
+    const result = window.cep.fs.showOpenDialogEx(false, true, 'Select Skip Existing Medias Folder');
 
     if (result.data.length > 0) {
         compareLocation = result.data[0];
         compareFiles = [];
         compareScanErrors = [];
         setText('comparePath', compareLocation);
-        try {
-            localStorage.setItem(COMPARE_LOCATION_STORAGE_KEY, compareLocation);
-        } catch (error) {}
     }
 }
 
@@ -2605,11 +2601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             setText('path', destination);
             setText('summaryText', 'Saved destination loaded. Click BACKUP PROJECT to begin.');
         }
-        const savedCompareLocation = localStorage.getItem(COMPARE_LOCATION_STORAGE_KEY) || '';
-        if (savedCompareLocation) {
-            compareLocation = savedCompareLocation;
-            setText('comparePath', compareLocation);
-        }
+        localStorage.removeItem('projectcollector.compareLocation');
     } catch (error) {}
 
     document.getElementById('sourceListBox').style.display = 'none';

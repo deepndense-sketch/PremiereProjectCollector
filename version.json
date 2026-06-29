@@ -1,5 +1,5 @@
 {
-  "version": "3.0.4",
+  "version": "3.0.5",
   "channel": "main",
-  "notes": "Release 3.0.4 simplifies the compare location UI while keeping automatic compare-and-skip during BACKUP PROJECT."
+  "notes": "Release 3.0.5 renames Compare Location to Skip Existing Medias, keeps it empty on load, and skips that step when no location is selected."
 }

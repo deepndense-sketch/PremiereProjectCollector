@@ -1,5 +1,5 @@
 {
-  "version": "2.1.4",
+  "version": "2.1.5",
   "channel": "main",
-  "notes": "Release 2.1.4 fixes GitHub updater quoting for installed paths with spaces such as Program Files."
+  "notes": "Release 2.1.5 softens the Destination section styling and keeps Select Destination on the standard button color."
 }

@@ -110,6 +110,16 @@ h1 {
     padding: 13px 16px;
 }
 
+.location-stack {
+    display: grid;
+    gap: 12px;
+}
+
+.location-block {
+    display: grid;
+    gap: 7px;
+}
+
 .section-header-row {
     display: flex;
     align-items: center;
@@ -260,6 +270,10 @@ button:disabled {
 .list-box {
     max-height: 280px;
     overflow: auto;
+}
+
+.compare-list-box {
+    max-height: 210px;
 }
 
 .tree-toolbar {
@@ -761,14 +775,36 @@ button:disabled {
             <div class="stack">
                 <div>
                     <h2 class="card-title">Destination</h2>
-                    <div class="inline-path-row">
-                        <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
-                        <div class="path-box" id="path">No folder selected yet</div>
+                    <div class="location-stack">
+                        <div class="location-block">
+                            <div class="label">1. Backup Destination</div>
+                            <div class="inline-path-row">
+                                <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
+                                <div class="path-box" id="path">No folder selected yet</div>
+                            </div>
+                        </div>
+                        <div class="location-block">
+                            <div class="label">2. Compare Location</div>
+                            <div class="inline-path-row">
+                                <button id="compareButton" class="button-secondary" onclick="chooseCompareFolder()">Select Compare Location</button>
+                                <div class="path-box" id="comparePath">No compare folder selected yet</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <div>
-                    <button id="collectButton" class="button-primary" onclick="collect()">Copy Project Media</button>
+                    <div class="tree-toolbar">
+                        <button id="inspectCompareButton" class="button-secondary button-small" onclick="inspectCompareLocation()">Inspect Compare Location</button>
+                    </div>
+                    <div class="path-box" id="compareSummary">Select a compare location to see existing files. BACKUP PROJECT will compare automatically before copying.</div>
+                    <div class="list-box compare-list-box" style="margin-top: 14px;">
+                        <ul class="result-list" id="compareFileList"></ul>
+                    </div>
+                </div>
+
+                <div>
+                    <button id="collectButton" class="button-primary" onclick="collect()">BACKUP PROJECT</button>
                 </div>
 
                 <div class="option-stack">

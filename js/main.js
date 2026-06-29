@@ -7,10 +7,13 @@ const childProcess = require('child_process');
 const { spawn } = childProcess;
 
 let destination = null;
+let compareLocation = null;
 let isCopying = false;
 let hostScriptReady = false;
 let latestPlan = null;
 let sourceTree = null;
+let compareFiles = [];
+let compareScanErrors = [];
 let listVisible = false;
 let selectionTouched = false;
 let localVersion = 'unknown';
@@ -29,6 +32,7 @@ let folderClickTimer = null;
 
 const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
 const DESTINATION_STORAGE_KEY = 'projectcollector.destination';
+const COMPARE_LOCATION_STORAGE_KEY = 'projectcollector.compareLocation';
 const IGNORE_SECTION_VISIBLE_STORAGE_KEY = 'projectcollector.ignoreSectionVisible';
 const SEQUENCE_ONLY_MODE_STORAGE_KEY = 'projectcollector.sequenceOnlyMode';
 const CREATE_REDUCED_PROJECT_STORAGE_KEY = 'projectcollector.createReducedProject';
@@ -547,6 +551,29 @@ function ensureDirectorySync(dirPath) {
     fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function formatBytes(size) {
+    const value = Number(size);
+
+    if (!Number.isFinite(value) || value < 0) {
+        return 'unknown size';
+    }
+
+    if (value < 1024) {
+        return `${value} B`;
+    }
+
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let unitIndex = -1;
+    let current = value;
+
+    do {
+        current /= 1024;
+        unitIndex += 1;
+    } while (current >= 1024 && unitIndex < units.length - 1);
+
+    return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+}
+
 function normalizePathForTree(filePath) {
     return String(filePath || '').replace(/\//g, '\\');
 }
@@ -565,6 +592,225 @@ function tryResolveWindowsPath(filePath) {
     } catch (error2) {}
 
     return normalized;
+}
+
+function getCompareFileName(filePath) {
+    return path.basename(String(filePath || '')).toLowerCase();
+}
+
+function buildCompareSizeKey(fileName, size) {
+    return `${fileName}|${size}`;
+}
+
+function getSourceCompareSignature(filePath) {
+    const normalized = normalizePathForTree(filePath);
+    const fileName = getCompareFileName(normalized);
+    let size = null;
+
+    try {
+        const stat = fs.statSync(normalized);
+        if (stat && stat.isFile()) {
+            size = stat.size;
+        }
+    } catch (error) {}
+
+    return {
+        fileName,
+        size
+    };
+}
+
+function scanCompareFiles(rootPath) {
+    const root = normalizePathForTree(rootPath);
+    const files = [];
+    const errors = [];
+    const visitedDirs = new Set();
+
+    if (!root) {
+        return {
+            files,
+            errors: ['No compare location selected.'],
+            blocked: true
+        };
+    }
+
+    try {
+        const rootStat = fs.statSync(root);
+        if (!rootStat.isDirectory()) {
+            return {
+                files,
+                errors: [`Compare location is not a folder: ${root}`],
+                blocked: true
+            };
+        }
+    } catch (error) {
+        return {
+            files,
+            errors: [`Could not open compare location: ${root}`],
+            blocked: true
+        };
+    }
+
+    const walk = (folderPath) => {
+        let folderKey = '';
+
+        try {
+            folderKey = tryResolveWindowsPath(folderPath).toLowerCase();
+        } catch (error) {
+            folderKey = normalizePathForTree(folderPath).toLowerCase();
+        }
+
+        if (visitedDirs.has(folderKey)) {
+            return;
+        }
+        visitedDirs.add(folderKey);
+
+        let names = [];
+        try {
+            names = fs.readdirSync(folderPath);
+        } catch (error) {
+            errors.push(`Could not read folder: ${folderPath}`);
+            return;
+        }
+
+        names.forEach((name) => {
+            const fullPath = path.join(folderPath, name);
+            let stat = null;
+
+            try {
+                stat = fs.lstatSync(fullPath);
+            } catch (error) {
+                errors.push(`Could not read file info: ${fullPath}`);
+                return;
+            }
+
+            if (stat.isSymbolicLink()) {
+                return;
+            }
+
+            if (stat.isDirectory()) {
+                walk(fullPath);
+                return;
+            }
+
+            if (stat.isFile()) {
+                files.push({
+                    name: path.basename(fullPath),
+                    path: fullPath,
+                    size: stat.size
+                });
+            }
+        });
+    };
+
+    walk(root);
+    files.sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+
+    return {
+        files,
+        errors,
+        blocked: false
+    };
+}
+
+function buildCompareLookup(files) {
+    const byNameAndSize = new Map();
+    const byName = new Map();
+
+    (files || []).forEach((file) => {
+        const fileName = getCompareFileName(file.name || file.path);
+
+        if (!fileName) {
+            return;
+        }
+
+        if (!byName.has(fileName)) {
+            byName.set(fileName, file);
+        }
+
+        if (Number.isFinite(Number(file.size))) {
+            const key = buildCompareSizeKey(fileName, Number(file.size));
+            if (!byNameAndSize.has(key)) {
+                byNameAndSize.set(key, file);
+            }
+        }
+    });
+
+    return {
+        byName,
+        byNameAndSize
+    };
+}
+
+function findCompareMatchForTask(task, lookup) {
+    if (!task || !lookup) {
+        return null;
+    }
+
+    const signature = getSourceCompareSignature(task.source);
+
+    if (!signature.fileName) {
+        return null;
+    }
+
+    if (signature.size !== null) {
+        const exactMatch = lookup.byNameAndSize.get(buildCompareSizeKey(signature.fileName, signature.size));
+        if (exactMatch) {
+            return exactMatch;
+        }
+        return null;
+    }
+
+    return lookup.byName.get(signature.fileName) || null;
+}
+
+function renderCompareFiles(files, errors, blocked) {
+    compareFiles = files || [];
+    compareScanErrors = errors || [];
+
+    if (!compareLocation) {
+        setText('compareSummary', 'Select a compare location to see existing files. BACKUP PROJECT will compare automatically before copying.');
+        renderList('compareFileList', [], null, 'No compare location selected.');
+        return;
+    }
+
+    if (blocked) {
+        setText('compareSummary', compareScanErrors[0] || 'Compare location could not be inspected.');
+    } else {
+        const warningText = compareScanErrors.length
+            ? ` ${compareScanErrors.length} folder or file warning${compareScanErrors.length === 1 ? '' : 's'} while scanning.`
+            : '';
+        setText('compareSummary', `${compareFiles.length} file${compareFiles.length === 1 ? '' : 's'} found in compare location. Folder location is ignored during matching.${warningText}`);
+    }
+
+    renderList(
+        'compareFileList',
+        compareFiles,
+        (item) => `${item.name} (${formatBytes(item.size)}) | ${item.path}`,
+        blocked ? 'Compare location could not be inspected.' : 'No files found in compare location.'
+    );
+}
+
+async function inspectCompareLocation() {
+    if (!compareLocation) {
+        renderCompareFiles([], [], false);
+        return {
+            files: [],
+            errors: [],
+            blocked: false,
+            lookup: buildCompareLookup([])
+        };
+    }
+
+    setText('compareSummary', 'Inspecting compare location...');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const scan = scanCompareFiles(compareLocation);
+    renderCompareFiles(scan.files, scan.errors, scan.blocked);
+
+    return Object.assign({}, scan, {
+        lookup: buildCompareLookup(scan.files)
+    });
 }
 
 function splitSourcePath(filePath) {
@@ -1829,6 +2075,14 @@ async function ensureHostScriptLoaded() {
 function setBusyState(busy) {
     isCopying = busy;
     document.getElementById('chooseButton').disabled = busy;
+    const compareButton = document.getElementById('compareButton');
+    const inspectCompareButton = document.getElementById('inspectCompareButton');
+    if (compareButton) {
+        compareButton.disabled = busy;
+    }
+    if (inspectCompareButton) {
+        inspectCompareButton.disabled = busy;
+    }
     document.getElementById('collectButton').disabled = busy;
     const refreshButton = document.getElementById('refreshProjectButton');
     if (refreshButton) {
@@ -1923,7 +2177,27 @@ async function chooseFolder() {
         try {
             localStorage.setItem(DESTINATION_STORAGE_KEY, destination);
         } catch (error) {}
-        setText('summaryText', 'Destination ready. Click Copy Project Media to begin.');
+        setText('summaryText', 'Destination ready. Click BACKUP PROJECT to begin.');
+    }
+}
+
+async function chooseCompareFolder() {
+    if (isCopying) {
+        return;
+    }
+
+    const result = window.cep.fs.showOpenDialogEx(false, true, 'Select Compare Folder');
+
+    if (result.data.length > 0) {
+        compareLocation = result.data[0];
+        compareFiles = [];
+        compareScanErrors = [];
+        setText('comparePath', compareLocation);
+        try {
+            localStorage.setItem(COMPARE_LOCATION_STORAGE_KEY, compareLocation);
+        } catch (error) {}
+        setText('compareSummary', 'Compare location ready. Click Inspect Compare Location, or BACKUP PROJECT will compare automatically.');
+        renderList('compareFileList', [], null, 'Compare location has not been inspected yet.');
     }
 }
 
@@ -2027,7 +2301,7 @@ async function collect() {
         sequenceScopeInfo = scopedPlan;
     }
 
-    const selectedTasks = (latestPlan.tasks || []).filter((task) => {
+    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => {
         const mediaKey = normalizeMediaKey(task.source);
         const insideIncludedFolder = isTaskInsideIncludedProjectFolder(task);
 
@@ -2053,6 +2327,47 @@ async function collect() {
 
         return true;
     });
+
+    let compareInfo = {
+        files: [],
+        errors: [],
+        blocked: false,
+        lookup: buildCompareLookup([])
+    };
+    let compareMatches = [];
+
+    if (compareLocation) {
+        setText('currentFile', 'Inspecting compare location');
+        compareInfo = await inspectCompareLocation();
+
+        if (compareInfo.blocked) {
+            setBusyState(false);
+            setText('summaryText', compareInfo.errors[0] || 'Compare location could not be inspected.');
+            return;
+        }
+
+        if (compareInfo.errors.length) {
+            copyWarnings.push(`Compare location scan had ${compareInfo.errors.length} warning${compareInfo.errors.length === 1 ? '' : 's'}. Some folders or files could not be read.`);
+        }
+    }
+
+    const selectedTasks = selectedTasksBeforeCompare.filter((task) => {
+        const match = compareLocation ? findCompareMatchForTask(task, compareInfo.lookup) : null;
+
+        if (match) {
+            compareMatches.push({
+                task,
+                match
+            });
+            return false;
+        }
+
+        return true;
+    });
+
+    if (compareLocation) {
+        setText('compareSummary', `${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked against ${selectedTasksBeforeCompare.length} selected project file${selectedTasksBeforeCompare.length === 1 ? '' : 's'}. ${compareMatches.length} already exist and will be skipped.`);
+    }
 
     const rootPath = path.join(destination, latestPlan.projectName);
     const plan = {
@@ -2106,6 +2421,10 @@ async function collect() {
         }
     });
 
+    compareMatches.forEach((item) => {
+        skippedItems.push(`${item.task.source} -> skipped because it already exists in compare location: ${item.match.path}`);
+    });
+
     if (sequenceOnlyMode && sequenceScopeInfo) {
         setText('summaryText', `Windows robocopy mode active. Copying only media used by ${sequenceScopeInfo.includedSequences.length} chosen/nested sequences into ${plan.rootPath}`);
     } else {
@@ -2146,6 +2465,9 @@ async function collect() {
     let copiedProjectMessage = '';
     let linkedProjectMessage = '';
     let copiedProjectPath = '';
+    const compareAvailableMediaTasks = compareMatches.map((item) => Object.assign({}, item.task, {
+        destinationPath: item.match.path
+    }));
 
     if (copyProjectFile) {
         setText('currentFile', 'Saving and copying Premiere project file');
@@ -2178,7 +2500,7 @@ async function collect() {
             if (copiedProjectPath) {
                 setText('currentFile', 'Linking copied project to collected media');
                 const linkRaw = await callHost(
-                    `linkProjectCopyToCollectedMedia("${escapeForEvalScript(copiedProjectPath)}","${escapeForEvalScript(JSON.stringify(buildLinkProjectTasks(copiedMediaTasks)))}")`
+                    `linkProjectCopyToCollectedMedia("${escapeForEvalScript(copiedProjectPath)}","${escapeForEvalScript(JSON.stringify(buildLinkProjectTasks(copiedMediaTasks.concat(compareAvailableMediaTasks))))}")`
                 );
                 const linkResult = safeJsonParse(linkRaw);
 
@@ -2257,9 +2579,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (savedDestination) {
             destination = savedDestination;
             setText('path', destination);
-            setText('summaryText', 'Saved destination loaded. Click Copy Project Media to begin.');
+            setText('summaryText', 'Saved destination loaded. Click BACKUP PROJECT to begin.');
+        }
+        const savedCompareLocation = localStorage.getItem(COMPARE_LOCATION_STORAGE_KEY) || '';
+        if (savedCompareLocation) {
+            compareLocation = savedCompareLocation;
+            setText('comparePath', compareLocation);
+            setText('compareSummary', 'Saved compare location loaded. Click Inspect Compare Location, or BACKUP PROJECT will compare automatically.');
         }
     } catch (error) {}
+    renderList('compareFileList', [], null, compareLocation ? 'Compare location has not been inspected yet.' : 'No compare location selected.');
 
     document.getElementById('sourceListBox').style.display = 'none';
     setText('showListButton', 'Show List');

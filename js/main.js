@@ -29,6 +29,8 @@ let trackRangeAnchor = null;
 let folderRangeAnchor = null;
 let trackClickTimer = null;
 let folderClickTimer = null;
+let trackConflictPromptResolver = null;
+let trackConflictPromptState = null;
 
 const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
 const DESTINATION_STORAGE_KEY = 'projectcollector.destination';
@@ -2098,6 +2100,154 @@ function showCompletionPrompt(success, message) {
     prompt.classList.add('is-visible');
 }
 
+function hideTrackConflictPrompt() {
+    const prompt = document.getElementById('trackConflictPrompt');
+    if (prompt) {
+        prompt.classList.remove('is-visible');
+    }
+}
+
+function updateTrackConflictPromptState() {
+    if (!trackConflictPromptState) {
+        return;
+    }
+
+    const decisions = trackConflictPromptState.decisions;
+    const conflicts = trackConflictPromptState.conflicts;
+    const resolvedCount = decisions.size;
+    const remainingCount = conflicts.length - resolvedCount;
+    const continueButton = document.getElementById('trackConflictContinueButton');
+    const status = document.getElementById('trackConflictStatus');
+
+    conflicts.forEach((conflict) => {
+        const row = document.querySelector(`[data-track-conflict-id="${conflict.id}"]`);
+        if (!row) {
+            return;
+        }
+
+        const decision = decisions.get(conflict.id) || '';
+        const copyButton = row.querySelector('[data-track-conflict-choice="copy"]');
+        const skipButton = row.querySelector('[data-track-conflict-choice="skip"]');
+        if (copyButton) {
+            copyButton.classList.toggle('is-selected', decision === 'copy');
+        }
+        if (skipButton) {
+            skipButton.classList.toggle('is-selected', decision === 'skip');
+        }
+    });
+
+    if (continueButton) {
+        continueButton.disabled = remainingCount > 0;
+    }
+    if (status) {
+        status.textContent = remainingCount > 0
+            ? `${resolvedCount} of ${conflicts.length} resolved. Choose an action for ${remainingCount} more.`
+            : `All ${conflicts.length} conflict${conflicts.length === 1 ? '' : 's'} resolved. The backup is ready to continue.`;
+    }
+}
+
+function setTrackConflictChoice(conflictId, decision) {
+    if (!trackConflictPromptState || (decision !== 'copy' && decision !== 'skip')) {
+        return;
+    }
+
+    trackConflictPromptState.decisions.set(conflictId, decision);
+    updateTrackConflictPromptState();
+}
+
+function setAllTrackConflictChoices(decision) {
+    if (!trackConflictPromptState || (decision !== 'copy' && decision !== 'skip')) {
+        return;
+    }
+
+    trackConflictPromptState.conflicts.forEach((conflict) => {
+        trackConflictPromptState.decisions.set(conflict.id, decision);
+    });
+    updateTrackConflictPromptState();
+}
+
+function finishTrackConflictPrompt(shouldContinue) {
+    if (!trackConflictPromptResolver || !trackConflictPromptState) {
+        return;
+    }
+
+    if (shouldContinue && trackConflictPromptState.decisions.size !== trackConflictPromptState.conflicts.length) {
+        return;
+    }
+
+    const resolve = trackConflictPromptResolver;
+    const result = shouldContinue ? new Map(trackConflictPromptState.decisions) : null;
+    trackConflictPromptResolver = null;
+    trackConflictPromptState = null;
+    hideTrackConflictPrompt();
+    resolve(result);
+}
+
+function showTrackConflictPrompt(conflicts) {
+    const prompt = document.getElementById('trackConflictPrompt');
+    const list = document.getElementById('trackConflictList');
+
+    if (!prompt || !list || !Array.isArray(conflicts) || !conflicts.length) {
+        return Promise.resolve(new Map());
+    }
+
+    list.innerHTML = '';
+    trackConflictPromptState = {
+        conflicts,
+        decisions: new Map()
+    };
+
+    conflicts.forEach((conflict) => {
+        const row = document.createElement('div');
+        row.className = 'track-conflict-row';
+        row.setAttribute('data-track-conflict-id', conflict.id);
+
+        const details = document.createElement('div');
+        details.className = 'track-conflict-details';
+
+        const name = document.createElement('div');
+        name.className = 'track-conflict-name';
+        name.textContent = conflict.name;
+
+        const source = document.createElement('div');
+        source.className = 'track-conflict-path';
+        source.textContent = conflict.source;
+
+        details.appendChild(name);
+        details.appendChild(source);
+
+        const actions = document.createElement('div');
+        actions.className = 'track-conflict-row-actions';
+
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'track-conflict-choice track-conflict-copy';
+        copyButton.setAttribute('data-track-conflict-choice', 'copy');
+        copyButton.textContent = 'Copy';
+        copyButton.onclick = () => setTrackConflictChoice(conflict.id, 'copy');
+
+        const skipButton = document.createElement('button');
+        skipButton.type = 'button';
+        skipButton.className = 'track-conflict-choice track-conflict-skip';
+        skipButton.setAttribute('data-track-conflict-choice', 'skip');
+        skipButton.textContent = 'Do not copy';
+        skipButton.onclick = () => setTrackConflictChoice(conflict.id, 'skip');
+
+        actions.appendChild(copyButton);
+        actions.appendChild(skipButton);
+        row.appendChild(details);
+        row.appendChild(actions);
+        list.appendChild(row);
+    });
+
+    prompt.classList.add('is-visible');
+    updateTrackConflictPromptState();
+
+    return new Promise((resolve) => {
+        trackConflictPromptResolver = resolve;
+    });
+}
+
 function resetResults() {
     hideCompletionPrompt();
     setText('currentFile', 'Waiting to start');
@@ -2188,6 +2338,81 @@ function hasIgnoredTracks(filtersPayload) {
     ));
 }
 
+function buildTrackSelectionConflicts(tasks, includedMediaSet, ignoredMediaSet, ignoredSignatureSet) {
+    const conflicts = [];
+    const seenMedia = new Set();
+
+    (tasks || []).forEach((task) => {
+        const mediaKey = normalizeMediaKey(task.source);
+        if (!mediaKey || seenMedia.has(mediaKey) || !includedMediaSet.has(mediaKey)) {
+            return;
+        }
+
+        if (!isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet)) {
+            return;
+        }
+
+        seenMedia.add(mediaKey);
+        conflicts.push({
+            id: `track-conflict-${conflicts.length + 1}`,
+            name: task.name || path.basename(task.source || '') || 'Unnamed media',
+            source: task.source || '',
+            mediaKey,
+            signatureKey: buildMediaSignatureKey(task.source)
+        });
+    });
+
+    return conflicts;
+}
+
+function buildTrackConflictDecisionInfo(conflicts, decisions) {
+    const info = {
+        copyMediaSet: new Set(),
+        copySignatureSet: new Set(),
+        skipMediaSet: new Set(),
+        skipSignatureSet: new Set()
+    };
+
+    (conflicts || []).forEach((conflict) => {
+        const decision = decisions && decisions.get(conflict.id);
+        if (decision !== 'copy' && decision !== 'skip') {
+            return;
+        }
+        const mediaSet = decision === 'copy' ? info.copyMediaSet : info.skipMediaSet;
+        const signatureSet = decision === 'copy' ? info.copySignatureSet : info.skipSignatureSet;
+        mediaSet.add(conflict.mediaKey);
+        if (conflict.signatureKey) {
+            signatureSet.add(conflict.signatureKey);
+        }
+    });
+
+    return info;
+}
+
+function getTrackConflictDecision(task, conflictDecisionInfo) {
+    if (!conflictDecisionInfo) {
+        return '';
+    }
+
+    const mediaKey = normalizeMediaKey(task.source);
+    if (conflictDecisionInfo.copyMediaSet.has(mediaKey)) {
+        return 'copy';
+    }
+    if (conflictDecisionInfo.skipMediaSet.has(mediaKey)) {
+        return 'skip';
+    }
+
+    const signatureKey = buildMediaSignatureKey(task.source);
+    if (signatureKey && conflictDecisionInfo.copySignatureSet.has(signatureKey)) {
+        return 'copy';
+    }
+    if (signatureKey && conflictDecisionInfo.skipSignatureSet.has(signatureKey)) {
+        return 'skip';
+    }
+
+    return '';
+}
+
 async function buildIgnoredMediaSetForCopy(filtersPayload) {
     const ignoredPaths = buildIgnoredMediaPathsFromSelection();
     const addIgnoredPaths = (mediaPaths) => {
@@ -2258,7 +2483,7 @@ function isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet) {
     return !!signatureKey && ignoredSignatureSet.has(signatureKey);
 }
 
-function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet) {
+function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet, conflictDecisionInfo) {
     const mediaKey = normalizeMediaKey(task.source);
 
     if (isTaskInsideIgnoredProjectFolder(task)) {
@@ -2269,7 +2494,12 @@ function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ig
         return 'skipped because it is not used by the chosen sequences';
     }
 
-    if (isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet)) {
+    const trackConflictDecision = getTrackConflictDecision(task, conflictDecisionInfo);
+    if (trackConflictDecision === 'skip') {
+        return 'skipped by your track conflict decision';
+    }
+
+    if (trackConflictDecision !== 'copy' && isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet)) {
         return 'skipped by ignored track selection';
     }
 
@@ -2308,25 +2538,37 @@ async function buildCopyReadyContext() {
     const copyWarnings = ignoredMediaInfo.warning ? [ignoredMediaInfo.warning] : [];
     let sequenceScopedMediaSet = null;
     let sequenceScopeInfo = null;
+    let scopedPlan = null;
+    const ignoredTracksSelected = hasIgnoredTracks(filtersPayload);
 
-    if (sequenceOnlyMode) {
+    if (sequenceOnlyMode && !filtersPayload.length) {
+        alert('Add at least one sequence before using selected-sequence collection mode.');
+        return { ok: false };
+    }
+
+    if (sequenceOnlyMode || ignoredTracksSelected) {
         if (!filtersPayload.length) {
-            alert('Add at least one sequence before using selected-sequence collection mode.');
+            setText('summaryText', 'Could not inspect track selections because no sequence is selected.');
             return { ok: false };
         }
 
         const scopedRaw = await callHost(`getSequenceScopedMediaPlan("${escapeForEvalScript(JSON.stringify(filtersPayload))}")`);
-        const scopedPlan = safeJsonParse(scopedRaw);
+        scopedPlan = safeJsonParse(scopedRaw);
         if (!scopedPlan || scopedPlan.error) {
             setText('summaryText', scopedPlan && scopedPlan.error ? scopedPlan.error : `Could not build the selected-sequence media plan. Raw response: ${scopedRaw}`);
             return { ok: false };
         }
 
-        sequenceScopedMediaSet = new Set((scopedPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
-        sequenceScopeInfo = scopedPlan;
+        if (sequenceOnlyMode) {
+            sequenceScopedMediaSet = new Set((scopedPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
+            sequenceScopeInfo = scopedPlan;
+        }
     }
 
-    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet));
+    const includedMediaSet = new Set(((scopedPlan && scopedPlan.mediaPaths) || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
+    const trackConflicts = ignoredTracksSelected
+        ? buildTrackSelectionConflicts(latestPlan.tasks || [], includedMediaSet, ignoredMediaSet, ignoredSignatureSet)
+        : [];
 
     return {
         ok: true,
@@ -2336,7 +2578,7 @@ async function buildCopyReadyContext() {
         copyWarnings,
         sequenceScopedMediaSet,
         sequenceScopeInfo,
-        selectedTasksBeforeCompare
+        trackConflicts
     };
 }
 
@@ -2366,7 +2608,30 @@ async function collect() {
     const copyWarnings = context.copyWarnings;
     const sequenceScopedMediaSet = context.sequenceScopedMediaSet;
     const sequenceScopeInfo = context.sequenceScopeInfo;
-    const selectedTasksBeforeCompare = context.selectedTasksBeforeCompare;
+    const trackConflicts = context.trackConflicts;
+    let conflictDecisionInfo = null;
+
+    if (trackConflicts.length) {
+        setText('currentFile', 'Waiting for track conflict decisions');
+        setText('summaryText', `${trackConflicts.length} media conflict${trackConflicts.length === 1 ? '' : 's'} found between included and ignored tracks.`);
+        const conflictDecisions = await showTrackConflictPrompt(trackConflicts);
+        if (!conflictDecisions) {
+            setBusyState(false);
+            setText('currentFile', 'Backup cancelled');
+            setText('summaryText', 'Backup cancelled before any files were copied. Track conflict choices were not applied.');
+            return;
+        }
+        conflictDecisionInfo = buildTrackConflictDecisionInfo(trackConflicts, conflictDecisions);
+    }
+
+    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(
+        task,
+        treeSelectedTaskSet,
+        sequenceScopedMediaSet,
+        ignoredMediaSet,
+        ignoredSignatureSet,
+        conflictDecisionInfo
+    ));
 
     let compareInfo = {
         files: [],
@@ -2434,7 +2699,7 @@ async function collect() {
     const skippedItems = [];
 
     (latestPlan.tasks || []).forEach((task) => {
-        const skipReason = getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet);
+        const skipReason = getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet, conflictDecisionInfo);
 
         if (skipReason) {
             skippedItems.push(`${task.source} -> ${skipReason}`);

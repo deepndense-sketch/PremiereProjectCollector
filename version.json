@@ -1,5 +1,5 @@
 {
-  "version": "3.0.7",
+  "version": "3.0.8",
   "channel": "main",
-  "notes": "Release 3.0.7 renames the media selection section title without changing behavior."
+  "notes": "Release 3.0.8 pauses before backup when the same media is used on included and ignored tracks, lists every conflict, and lets the user choose Copy or Do not copy for each file."
 }

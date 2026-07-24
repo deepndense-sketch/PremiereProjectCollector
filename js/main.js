@@ -2107,6 +2107,43 @@ function hideTrackConflictPrompt() {
     }
 }
 
+function createTrackConflictDecisionStore() {
+    return Object.create(null);
+}
+
+function getTrackConflictDecisionValue(decisions, conflictId) {
+    if (!decisions) {
+        return '';
+    }
+
+    if (typeof decisions.get === 'function') {
+        return decisions.get(conflictId) || '';
+    }
+
+    return Object.prototype.hasOwnProperty.call(decisions, conflictId)
+        ? decisions[conflictId]
+        : '';
+}
+
+function countTrackConflictDecisions(conflicts, decisions) {
+    return (conflicts || []).reduce((count, conflict) => (
+        getTrackConflictDecisionValue(decisions, conflict.id) ? count + 1 : count
+    ), 0);
+}
+
+function cloneTrackConflictDecisions(conflicts, decisions) {
+    const result = createTrackConflictDecisionStore();
+
+    (conflicts || []).forEach((conflict) => {
+        const decision = getTrackConflictDecisionValue(decisions, conflict.id);
+        if (decision === 'copy' || decision === 'skip') {
+            result[conflict.id] = decision;
+        }
+    });
+
+    return result;
+}
+
 function updateTrackConflictPromptState() {
     if (!trackConflictPromptState) {
         return;
@@ -2114,7 +2151,7 @@ function updateTrackConflictPromptState() {
 
     const decisions = trackConflictPromptState.decisions;
     const conflicts = trackConflictPromptState.conflicts;
-    const resolvedCount = decisions.size;
+    const resolvedCount = countTrackConflictDecisions(conflicts, decisions);
     const remainingCount = conflicts.length - resolvedCount;
     const continueButton = document.getElementById('trackConflictContinueButton');
     const status = document.getElementById('trackConflictStatus');
@@ -2125,7 +2162,7 @@ function updateTrackConflictPromptState() {
             return;
         }
 
-        const decision = decisions.get(conflict.id) || '';
+        const decision = getTrackConflictDecisionValue(decisions, conflict.id);
         const copyButton = row.querySelector('[data-track-conflict-choice="copy"]');
         const skipButton = row.querySelector('[data-track-conflict-choice="skip"]');
         if (copyButton) {
@@ -2151,7 +2188,7 @@ function setTrackConflictChoice(conflictId, decision) {
         return;
     }
 
-    trackConflictPromptState.decisions.set(conflictId, decision);
+    trackConflictPromptState.decisions[conflictId] = decision;
     updateTrackConflictPromptState();
 }
 
@@ -2161,7 +2198,7 @@ function setAllTrackConflictChoices(decision) {
     }
 
     trackConflictPromptState.conflicts.forEach((conflict) => {
-        trackConflictPromptState.decisions.set(conflict.id, decision);
+        trackConflictPromptState.decisions[conflict.id] = decision;
     });
     updateTrackConflictPromptState();
 }
@@ -2171,12 +2208,14 @@ function finishTrackConflictPrompt(shouldContinue) {
         return;
     }
 
-    if (shouldContinue && trackConflictPromptState.decisions.size !== trackConflictPromptState.conflicts.length) {
+    const conflicts = trackConflictPromptState.conflicts;
+    const decisions = trackConflictPromptState.decisions;
+    if (shouldContinue && countTrackConflictDecisions(conflicts, decisions) !== conflicts.length) {
         return;
     }
 
     const resolve = trackConflictPromptResolver;
-    const result = shouldContinue ? new Map(trackConflictPromptState.decisions) : null;
+    const result = shouldContinue ? cloneTrackConflictDecisions(conflicts, decisions) : null;
     trackConflictPromptResolver = null;
     trackConflictPromptState = null;
     hideTrackConflictPrompt();
@@ -2188,13 +2227,13 @@ function showTrackConflictPrompt(conflicts) {
     const list = document.getElementById('trackConflictList');
 
     if (!prompt || !list || !Array.isArray(conflicts) || !conflicts.length) {
-        return Promise.resolve(new Map());
+        return Promise.resolve(createTrackConflictDecisionStore());
     }
 
     list.innerHTML = '';
     trackConflictPromptState = {
         conflicts,
-        decisions: new Map()
+        decisions: createTrackConflictDecisionStore()
     };
 
     conflicts.forEach((conflict) => {
@@ -2374,7 +2413,7 @@ function buildTrackConflictDecisionInfo(conflicts, decisions) {
     };
 
     (conflicts || []).forEach((conflict) => {
-        const decision = decisions && decisions.get(conflict.id);
+        const decision = getTrackConflictDecisionValue(decisions, conflict.id);
         if (decision !== 'copy' && decision !== 'skip') {
             return;
         }
@@ -2583,6 +2622,28 @@ async function buildCopyReadyContext() {
 }
 
 async function collect() {
+    try {
+        await runCollection();
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error || 'Unknown backup error');
+        trackConflictPromptResolver = null;
+        trackConflictPromptState = null;
+        hideTrackConflictPrompt();
+        setText('currentFile', 'Backup stopped by an unexpected error');
+        setText('summaryText', `Backup could not continue. ${message}`);
+        renderList(
+            'errorList',
+            [{ source: 'Project Collector', destination: destination || '', message }],
+            (item) => `${item.source} -> ${item.destination} | ${item.message}`,
+            'No errors.'
+        );
+        showCompletionPrompt(false, `Backup could not continue. ${message}`);
+        setBusyState(false);
+        console.error('Project Collector backup failed', error);
+    }
+}
+
+async function runCollection() {
     if (isCopying) {
         return;
     }

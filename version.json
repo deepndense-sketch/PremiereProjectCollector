@@ -1,5 +1,5 @@
 {
-  "version": "3.0.8",
+  "version": "3.0.9",
   "channel": "main",
-  "notes": "Release 3.0.8 pauses before backup when the same media is used on included and ignored tracks, lists every conflict, and lets the user choose Copy or Do not copy for each file."
+  "notes": "Release 3.0.9 fixes Continue Backup after included/ignored track conflicts and reports unexpected backup errors instead of silently stopping."
 }

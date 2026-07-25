@@ -3,10 +3,25 @@ setlocal
 
 set "SRC=%~dp0"
 if "%SRC:~-1%"=="\" set "SRC=%SRC:~0,-1%"
-set "DEST=%APPDATA%\Adobe\CEP\extensions\PremiereProjectCollector"
+set "DEST=C:\Program Files (x86)\Common Files\Adobe\CEP\extensions\PremiereProjectCollector"
 set "RC=0"
 
 title Project Collector Deploy
+
+fltmc >nul 2>&1
+if errorlevel 1 (
+    echo Administrator access is required for the system-wide Adobe CEP folder.
+    echo Requesting administrator access...
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    if errorlevel 1 (
+        echo.
+        echo [ERROR] Administrator access was not granted.
+        echo.
+        pause
+        exit /b 1
+    )
+    exit /b 0
+)
 
 echo Source: %SRC%
 echo Destination: %DEST%

@@ -6,22 +6,22 @@
 <style>
 :root {
     color-scheme: dark;
-    --bg: #1c1f25;
-    --panel: #262b33;
-    --panel-2: #333a45;
-    --panel-soft: #2b313a;
-    --line: #414a58;
-    --line-soft: #566275;
-    --text: #f3f5f8;
-    --muted: #b9c0cb;
-    --accent: #1f8bff;
-    --accent-2: #42a5ff;
-    --accent-soft: #163b68;
-    --success: #38d36f;
-    --success-soft: #153b27;
-    --danger-soft: #5e2f37;
-    --danger: #ff6b6b;
-    --shadow: rgba(0, 0, 0, 0.35);
+    --bg: #080706;
+    --panel: #151515;
+    --panel-2: #222222;
+    --panel-soft: #1b1b1b;
+    --line: #4d4d4d;
+    --line-soft: #6a6a6a;
+    --text: #f7f7f7;
+    --muted: #c4c4c4;
+    --accent: #c44b12;
+    --accent-2: #d45c18;
+    --accent-soft: #3b1a0c;
+    --success: #c6531d;
+    --success-soft: #3b1a0c;
+    --danger-soft: #662b50;
+    --danger: #ff6f9f;
+    --shadow: rgba(0, 0, 0, 0.72);
 }
 
 * {
@@ -32,7 +32,11 @@ html,
 body {
     margin: 0;
     min-height: 100%;
-    background: radial-gradient(circle at top, #313847 0%, var(--bg) 48%, #14171d 100%);
+    background:
+        radial-gradient(circle at 12% -8%, rgba(174, 58, 10, 0.34), transparent 36%),
+        radial-gradient(circle at 94% 2%, rgba(116, 42, 10, 0.20), transparent 32%),
+        linear-gradient(150deg, #15110f 0%, var(--bg) 54%, #101010 100%);
+    background-attachment: fixed;
     color: var(--text);
     font-family: "Segoe UI", "Helvetica Neue", sans-serif;
 }
@@ -50,20 +54,29 @@ body {
 
 .hero,
 .card {
-    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    background: linear-gradient(145deg, rgba(31, 31, 31, 0.98), rgba(16, 16, 16, 0.99));
     border: 1px solid var(--line);
     border-radius: 18px;
-    box-shadow: 0 18px 40px var(--shadow);
+    box-shadow:
+        0 22px 54px var(--shadow),
+        0 0 28px rgba(145, 49, 12, 0.09),
+        inset 0 1px 0 rgba(255,255,255,0.055);
 }
 
 .hero {
     padding: 20px;
+    background:
+        linear-gradient(115deg, rgba(177, 58, 12, 0.30), rgba(112, 37, 10, 0.10) 56%, transparent 78%),
+        linear-gradient(145deg, rgba(35, 35, 35, 0.99), rgba(15, 15, 15, 0.99));
+    border-color: rgba(196, 75, 18, 0.78);
 }
 
 h1 {
     margin: 0;
     font-size: 28px;
     font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 0 30px rgba(177, 58, 12, 0.34);
 }
 
 .hero-top {
@@ -161,49 +174,51 @@ button:disabled {
     letter-spacing: 0.1em;
     text-transform: uppercase;
     box-shadow: none;
-    border: 1px solid rgba(66, 165, 255, 0.22);
+    border: 1px solid rgba(196, 75, 18, 0.42);
 }
 
 #updateButton.button-update-ready {
-    background: linear-gradient(135deg, #56a7ff, #2d73ff);
-    color: #ffffff;
-    box-shadow: 0 10px 24px rgba(45, 115, 255, 0.28);
+    background: linear-gradient(135deg, #e4661d, #d45212);
+    color: #160b06;
+    box-shadow: 0 10px 26px rgba(151, 49, 10, 0.42);
     border: 0;
 }
 
 #updateButton.button-update-ready:hover:not(:disabled) {
-    background: linear-gradient(135deg, #68b2ff, #3d80ff);
-    color: #ffffff;
+    background: linear-gradient(135deg, #ef7428, #dc5b18);
+    color: #160b06;
 }
 
 .button-secondary {
-    background: linear-gradient(180deg, #46505e, #38414c);
+    background: linear-gradient(180deg, #505050, #3f3f3f);
     color: var(--text);
+    border: 1px solid #747474;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
 .button-primary {
-    background: linear-gradient(135deg, var(--accent), #1270d7);
-    color: white;
-    box-shadow: 0 10px 24px rgba(31, 139, 255, 0.25);
+    background: linear-gradient(135deg, #e4661d, #d45212);
+    color: #160b06;
+    box-shadow: 0 10px 28px rgba(151, 49, 10, 0.42);
 }
 
 .button-accent {
-    background: linear-gradient(135deg, #58a8ff, #2f7fff);
-    color: #f7fbff;
-    box-shadow: 0 10px 24px rgba(47, 127, 255, 0.24);
+    background: linear-gradient(135deg, #e4661d, #d45212);
+    color: #160b06;
+    box-shadow: 0 10px 26px rgba(151, 49, 10, 0.38);
 }
 
 .button-danger-soft {
-    background: linear-gradient(180deg, #5a3139, #47262d);
-    color: #ffe9eb;
+    background: linear-gradient(180deg, #74382d, #542821);
+    color: #ffe9f0;
+    border: 1px solid #91483a;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
 }
 
 .button-compare {
-    background: linear-gradient(135deg, #316d7b, #244d63);
-    color: #eefcff;
-    box-shadow: 0 10px 20px rgba(36, 77, 99, 0.18);
+    background: linear-gradient(135deg, #e4661d, #d45212);
+    color: #160b06;
+    box-shadow: 0 10px 24px rgba(120, 40, 10, 0.34);
 }
 
 .grid {
@@ -221,25 +236,31 @@ button:disabled {
 }
 
 .destination-card {
-    background: linear-gradient(180deg, rgba(45, 72, 112, 0.22), rgba(24, 34, 52, 0.34));
-    border-color: rgba(76, 111, 162, 0.46);
+    background:
+        linear-gradient(145deg, rgba(74, 36, 19, 0.38), rgba(17, 17, 17, 0.99));
+    border-color: rgba(196, 75, 18, 0.72);
 }
 
 .destination-card .button-primary {
-    background: linear-gradient(135deg, #5d83d8, #4357a9);
-    color: #f7f9ff;
-    box-shadow: 0 10px 22px rgba(67, 87, 169, 0.18);
+    background: linear-gradient(135deg, #e4661d, #d45212);
+    color: #160b06;
+    box-shadow: 0 10px 26px rgba(135, 43, 9, 0.38);
 }
 
 .card-title {
     margin: 0 0 14px;
     font-size: 18px;
+    color: #ffffff;
+}
+
+.label {
+    color: #ededed;
 }
 
 .path-box,
 .status-box,
 .list-box {
-    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03)), var(--panel);
+    background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(0,0,0,0.14)), #111111;
     border: 1px solid var(--line);
     border-radius: 14px;
     padding: 16px;
@@ -253,10 +274,10 @@ button:disabled {
 .progress-track {
     width: 100%;
     height: 12px;
-    background: #171718;
+    background: #0c0f18;
     border-radius: 999px;
     overflow: hidden;
-    border: 1px solid #2c2c2f;
+    border: 1px solid #4b2e20;
     margin: 12px 0;
 }
 
@@ -264,7 +285,8 @@ button:disabled {
     width: 0%;
     height: 100%;
     border-radius: 999px;
-    background: linear-gradient(90deg, var(--accent), #67b8ff);
+    background: linear-gradient(90deg, #d45212, #ed7025);
+    box-shadow: 0 0 20px rgba(174, 58, 10, 0.46);
 }
 
 .status-line {
@@ -308,6 +330,30 @@ button:disabled {
     line-height: 1.45;
 }
 
+#sequenceFilterHint {
+    margin-top: 10px;
+}
+
+.data-cleanup-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 2px 4px 0;
+}
+
+.data-cleanup-row .button-danger-soft {
+    padding: 7px 10px;
+    font-size: 11px;
+    border-radius: 8px;
+}
+
+.data-cleanup-status {
+    min-width: 0;
+    text-align: right;
+}
+
 .section-toggle {
     padding: 8px 12px;
     font-size: 12px;
@@ -324,7 +370,7 @@ button:disabled {
     display: flex;
     gap: 10px;
     align-items: flex-start;
-    background: rgba(255,255,255,0.02);
+    background: #1c1c1c;
     border: 1px solid var(--line);
     border-radius: 12px;
     padding: 10px 12px;
@@ -335,7 +381,7 @@ button:disabled {
 }
 
 .embedded-section {
-    border-top: 1px solid var(--line);
+    border-top: 1px solid #555555;
     padding-top: 16px;
     margin-top: 16px;
 }
@@ -359,7 +405,9 @@ button:disabled {
 }
 
 .sequence-card {
-    background: linear-gradient(180deg, rgba(84, 102, 130, 0.14), rgba(32, 36, 44, 0.92));
+    background:
+        linear-gradient(135deg, rgba(158, 57, 15, 0.16), transparent 54%),
+        linear-gradient(180deg, rgba(38, 38, 38, 0.99), rgba(21, 21, 21, 0.99));
     border: 1px solid var(--line-soft);
     border-radius: 14px;
     padding: 14px;
@@ -371,9 +419,77 @@ button:disabled {
 .sequence-header {
     display: flex;
     gap: 10px;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-wrap: nowrap;
+    align-items: flex-start;
     justify-content: space-between;
+}
+
+.sequence-title-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.sequence-header-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.sequence-preset-section {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) auto auto auto;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 0 0;
+    background: transparent;
+    border: 0;
+    border-top: 1px solid #555555;
+}
+
+.sequence-preset-select {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 9px;
+    border: 1px solid #707070;
+    border-radius: 7px;
+    background: #303030;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+}
+
+.sequence-preset-select:focus {
+    outline: 2px solid #d45212;
+    outline-offset: 1px;
+}
+
+.sequence-preset-save {
+    padding: 7px 10px;
+    white-space: nowrap;
+    background: linear-gradient(135deg, #e4661d, #d45212);
+    border-color: #ed7025;
+    color: #160b06;
+}
+
+.sequence-preset-delete {
+    padding: 7px 10px;
+    white-space: nowrap;
+}
+
+.sequence-reset-button {
+    padding: 5px 8px;
+}
+
+.sequence-remove-button {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+    margin-left: auto;
+    align-self: flex-start;
 }
 
 .sequence-title {
@@ -426,9 +542,9 @@ button:disabled {
     gap: 8px;
     padding: 8px 11px;
     border-radius: 12px;
-    background: linear-gradient(180deg, #414955, #353d48);
-    border: 1px solid #5a6779;
-    color: #f3f6fb;
+    background: linear-gradient(180deg, #4c4c4c, #3a3a3a);
+    border: 1px solid #707070;
+    color: #f1ede9;
     font-size: 12px;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
 }
@@ -439,7 +555,7 @@ button:disabled {
     height: 18px;
     border-radius: 999px;
     background: rgba(255,255,255,0.08);
-    color: #eef3fb;
+    color: #f1ede9;
     font-size: 12px;
     box-shadow: none;
 }
@@ -461,22 +577,50 @@ button:disabled {
     gap: 10px;
 }
 
+.track-choice-grid {
+    gap: 6px;
+}
+
+.track-choice-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.choice-button.track-choice-button {
+    width: 38px;
+    min-width: 38px;
+    padding: 4px 3px;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #e4661d, #d45212);
+    border-color: #ed7025;
+    color: #160b06;
+    text-align: center;
+    box-shadow: none;
+    font-size: 11px;
+}
+
+.choice-button.track-choice-button.is-ignored {
+    background: #454545;
+    color: #f7f7f7;
+    opacity: 0.48;
+}
+
+.choice-button.track-choice-button.is-range-anchor {
+    background: linear-gradient(180deg, #c9470e, #a93609);
+    border-color: #e4661d;
+    color: #ffffff;
+}
+
 .folder-choice-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
-    align-items: start;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
 }
 
 .folder-choice-grid .choice-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-items: start;
-}
-
-.folder-choice-grid .choice-meta {
-    text-align: left;
+    display: inline-flex;
 }
 
 .choice-item {
@@ -489,23 +633,23 @@ button:disabled {
     min-width: 58px;
     padding: 7px 9px;
     border-radius: 10px;
-    background: linear-gradient(180deg, #27884b, #1f6f3d);
-    color: #f5fff8;
-    border: 1px solid rgba(92, 232, 137, 0.45);
+    background: linear-gradient(180deg, #e4661d, #d45212);
+    color: #160b06;
+    border: 1px solid #ed7025;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
     text-align: left;
 }
 
 .choice-button.is-ignored {
     opacity: 0.42;
-    background: linear-gradient(180deg, #2d7247, #225737);
-    border-color: rgba(92, 232, 137, 0.34);
+    background: linear-gradient(180deg, #3a3a3a, #292929);
+    border-color: #555555;
 }
 
 .choice-button.is-range-anchor {
     opacity: 1;
-    background: linear-gradient(135deg, #1f8bff, #1366c8);
-    border-color: #65b5ff;
+    background: linear-gradient(135deg, #b94310, #6e2509);
+    border-color: #cd541c;
     color: #ffffff;
 }
 
@@ -531,15 +675,72 @@ button:disabled {
     width: auto;
     min-width: 0;
     max-width: none;
-    background: linear-gradient(180deg, #46505e, #38414c);
-    border-color: #5a6779;
-    color: #f3f6fb;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    border-radius: 7px;
+    background: #474747;
+    border-color: #747474;
+    color: #f1f1f1;
+    box-shadow: none;
+    font-size: 12px;
+    line-height: 1;
 }
 
 .folder-button.is-included {
-    background: linear-gradient(180deg, #27884b, #1f6f3d);
-    border-color: rgba(92, 232, 137, 0.45);
-    color: #f5fff8;
+    background: #d45212;
+    border-color: #ed7025;
+    box-shadow: inset 3px 0 #b63d0b;
+    color: #160b06;
+}
+
+.folder-button.is-ignored {
+    background: #3a3a3a;
+    border-color: #606060;
+    opacity: 0.42;
+}
+
+.folder-button.is-range-anchor {
+    background: #b63d0b;
+    border-color: #e4661d;
+    box-shadow: inset 3px 0 #8f2d08;
+    color: #ffffff;
+}
+
+.folder-icon {
+    position: relative;
+    width: 15px;
+    height: 11px;
+    flex: 0 0 15px;
+    border-radius: 2px;
+    background: #a0a0a0;
+}
+
+.folder-icon::before {
+    content: "";
+    position: absolute;
+    left: 1px;
+    top: -3px;
+    width: 7px;
+    height: 4px;
+    border-radius: 2px 2px 0 0;
+    background: #a0a0a0;
+}
+
+.folder-count {
+    color: #d5d5d5;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.folder-button.is-included .folder-count {
+    color: #2a140b;
+}
+
+.folder-button.is-included .folder-icon,
+.folder-button.is-included .folder-icon::before {
+    background: #2a140b;
 }
 
 .done-prompt {
@@ -549,7 +750,7 @@ button:disabled {
     align-items: center;
     justify-content: center;
     padding: 20px;
-    background: rgba(6, 8, 12, 0.68);
+    background: rgba(5, 7, 13, 0.78);
     z-index: 1000;
 }
 
@@ -583,6 +784,116 @@ button:disabled {
     margin-bottom: 18px;
 }
 
+.track-conflict-dialog {
+    width: min(780px, 100%);
+    max-height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
+}
+
+.track-conflict-title {
+    color: #c6531d;
+    font-size: 26px;
+}
+
+.track-conflict-list {
+    display: grid;
+    gap: 10px;
+    max-height: 370px;
+    overflow: auto;
+    padding: 2px 4px 2px 0;
+    margin-bottom: 14px;
+}
+
+.track-conflict-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+}
+
+.track-conflict-details {
+    min-width: 0;
+}
+
+.track-conflict-name {
+    font-weight: 800;
+    line-height: 1.3;
+}
+
+.track-conflict-path {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.track-conflict-row-actions,
+.track-conflict-bulk-actions,
+.track-conflict-footer {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.track-conflict-choice,
+.track-conflict-bulk-actions button {
+    padding: 9px 12px;
+    border-radius: 9px;
+    font-size: 12px;
+}
+
+.track-conflict-copy,
+.track-conflict-copy-all {
+    background: linear-gradient(180deg, #e4661d, #d45212);
+    color: #160b06;
+}
+
+.track-conflict-skip,
+.track-conflict-skip-all {
+    background: linear-gradient(180deg, #74382d, #542821);
+    color: #ffe9eb;
+}
+
+.track-conflict-choice:not(.is-selected) {
+    opacity: 0.48;
+}
+
+.track-conflict-choice.is-selected {
+    opacity: 1;
+    box-shadow: 0 0 0 2px #ffffff, 0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.track-conflict-bulk-actions {
+    margin-bottom: 12px;
+}
+
+.track-conflict-status {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+    margin-bottom: 14px;
+}
+
+.track-conflict-footer {
+    justify-content: flex-end;
+}
+
+@media (max-width: 620px) {
+    .track-conflict-row {
+        grid-template-columns: 1fr;
+    }
+
+    .sequence-preset-section {
+        grid-template-columns: 1fr;
+    }
+}
+
 .tree-box {
     max-height: 420px;
 }
@@ -596,7 +907,7 @@ button:disabled {
 }
 
 .tree-node {
-    background: var(--panel-2);
+    background: linear-gradient(180deg, #292929, #202020);
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 8px 10px;
@@ -682,7 +993,7 @@ button:disabled {
 }
 
 .warning-title {
-    color: #ffd28c;
+    color: #c6531d;
 }
 
 .error-title {
@@ -718,30 +1029,29 @@ button:disabled {
     <section class="grid">
         <div class="card full-width">
             <div class="section-header-row">
-                <h2 class="card-title" style="margin: 0;">Select or Ignore Medias for Backup</h2>
+                <h2 class="card-title" style="margin: 0;">Select or Ignore Media</h2>
                 <button id="toggleIgnoreButton" class="button-secondary section-toggle" onclick="toggleIgnoreSection()">Hide</button>
             </div>
             <div id="ignoreSectionContent" style="display: block;">
-                <p class="selection-note" style="margin-top: 14px;">Green tracks are included. Single-click a track to fade it and ignore its media. Double-click one track, then double-click another track in the same group to ignore that full range. Media used on an ignored track will not be copied.</p>
+                <p class="selection-note" style="margin-top: 14px;">Click to include or ignore. Double-click two tracks to ignore a range.</p>
                 <div class="tree-toolbar">
-                    <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Current Active Sequence</button>
-                    <button class="button-danger-soft button-small" onclick="resetTrackSelection()">Reset</button>
+                    <button class="button-accent button-small" onclick="addCurrentActiveSequence()">Add Active Sequence</button>
                 </div>
                 <div class="sequence-filter-stack" id="sequenceFilters"></div>
-                <div class="small-note" id="sequenceFilterHint">Nested sequence media is collected correctly even when a visible track count only reflects direct clips.</div>
+                <div class="small-note" id="sequenceFilterHint">Refresh reloads and resets every selected sequence.</div>
 
                 <div class="embedded-section">
                     <div class="embedded-title-row">
-                        <h2 class="card-title" style="margin: 0;">Premiere Project Folders</h2>
+                        <h2 class="card-title" style="margin: 0;">Premiere Folders</h2>
                         <button id="toggleProjectFoldersButton" class="button-secondary section-toggle" onclick="toggleProjectFolderSection()">Show</button>
                     </div>
                     <div id="projectFolderSectionContent" style="display: none;">
-                        <p class="selection-note">Only root bins are listed here. Bin buttons start neutral, meaning no special rule. Single-click once to turn green and force-copy that root bin, click again to fade it and ignore everything inside, click again to return it to neutral. Ignored bins win first; green bins force-copy only inside the reduced sequence and track selection. Double-click two bins to ignore the full range between them.</p>
+                        <p class="selection-note">Click: neutral → include → ignore. Double-click two folders for a range.</p>
                         <div class="tree-toolbar">
                             <button class="button-danger-soft button-small" onclick="resetProjectFolderSelection()">Reset</button>
                         </div>
                         <div class="choice-grid folder-choice-grid" id="projectFolderFilters"></div>
-                        <div class="small-note" id="projectFolderHint">Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.</div>
+                        <div class="small-note" id="projectFolderHint">Gray folders have no special rule.</div>
                     </div>
                 </div>
 
@@ -751,7 +1061,7 @@ button:disabled {
                         <button id="toggleSourceSectionButton" class="button-secondary section-toggle" onclick="toggleSourceSection()">Show</button>
                     </div>
                     <div id="sourceSectionContent" style="display: none;">
-                        <p class="selection-note">Browse all source files by drive and folder. Selecting a drive or folder includes everything inside it. The list opens at the root only; expanding a folder shows just the next level.</p>
+                        <p class="selection-note">Selecting a drive or folder includes everything inside.</p>
                         <div class="tree-toolbar">
                             <button id="showListButton" class="button-secondary button-small" onclick="toggleSourceList()">Show List</button>
                             <button class="button-secondary button-small" onclick="setAllSelections(true)">Include All</button>
@@ -763,17 +1073,6 @@ button:disabled {
                         </div>
                     </div>
                 </div>
-
-                <div class="option-stack" style="margin-top: 14px;">
-                    <label class="option-row">
-                        <input id="sequenceOnlyMode" type="checkbox" onchange="toggleSequenceOnlyMode()">
-                        <span>Copy only media used by the chosen sequences, and include all nested sequences used inside them.</span>
-                    </label>
-                    <label class="option-row">
-                        <input id="createReducedProject" type="checkbox" onchange="toggleCreateReducedProject()">
-                        <span>Create a reduced Premiere project from the chosen sequences after media copy finishes.</span>
-                    </label>
-                </div>
             </div>
         </div>
 
@@ -782,36 +1081,41 @@ button:disabled {
                 <div>
                     <h2 class="card-title">Destination</h2>
                     <div class="location-block">
-                        <div class="label">1. Skip Existing Medias</div>
-                        <p class="selection-note">Give location where you want to compare your project files with to ignore from copying. When you click BACKUP PROJECT, files already existing here are ignored automatically. Leave empty to skip this step and copy normally.</p>
                         <div class="inline-path-row">
-                            <button id="compareButton" class="button-compare" onclick="chooseCompareFolder()">Select Skip Location</button>
+                            <button id="compareButton" class="button-compare" onclick="chooseCompareFolder()">Skip Files From</button>
                             <div class="path-box" id="comparePath">No skip location selected</div>
                         </div>
                     </div>
                 </div>
 
                 <div class="location-block">
-                    <div class="label">2. Backup Destination</div>
                     <div class="inline-path-row">
-                        <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Select Destination</button>
+                        <button id="chooseButton" class="button-secondary" onclick="chooseFolder()">Copy Files To</button>
                         <div class="path-box" id="path">No folder selected yet</div>
                     </div>
                 </div>
 
-                <div>
-                    <button id="collectButton" class="button-primary" onclick="collect()">BACKUP PROJECT</button>
-                </div>
-
                 <div class="option-stack">
+                    <label class="option-row">
+                        <input id="sequenceOnlyMode" type="checkbox" onchange="toggleSequenceOnlyMode()">
+                        <span>Copy media used by selected and nested sequences.</span>
+                    </label>
+                    <label class="option-row">
+                        <input id="createReducedProject" type="checkbox" onchange="toggleCreateReducedProject()">
+                        <span>Create a reduced project from selected sequences.</span>
+                    </label>
                     <label class="option-row">
                         <input id="copyProjectFile" type="checkbox" onchange="toggleCopyProjectFile()">
                         <span>Copy Premiere project file after collection and name it BACKUP.</span>
                     </label>
                     <label class="option-row">
                         <input id="linkProjectAfterCollection" type="checkbox" onchange="toggleLinkProjectAfterCollection()">
-                        <span>Link copied project to the collected media after collection.</span>
+                        <span>Link Copied Files.</span>
                     </label>
+                </div>
+
+                <div>
+                    <button id="collectButton" class="button-primary" onclick="collect()">BACKUP PROJECT</button>
                 </div>
 
                 <div>
@@ -841,6 +1145,11 @@ button:disabled {
             </div>
         </div>
 
+        <div class="data-cleanup-row">
+            <span class="small-note data-cleanup-status" id="dataCleanupStatus">Delete saved project and panel data. Presets and destination are kept.</span>
+            <button type="button" class="button-danger-soft" onclick="deletePluginRelatedData()">Delete plugin-related data</button>
+        </div>
+
     </section>
 </div>
 <div class="done-prompt" id="completionPrompt">
@@ -848,6 +1157,22 @@ button:disabled {
         <h2 class="done-title" id="completionTitle">Done without error</h2>
         <div class="done-message" id="completionMessage">All files copied successfully.</div>
         <button class="button-primary" onclick="hideCompletionPrompt()">Close</button>
+    </div>
+</div>
+<div class="done-prompt" id="trackConflictPrompt" role="dialog" aria-modal="true" aria-labelledby="trackConflictTitle">
+    <div class="done-dialog track-conflict-dialog">
+        <h2 class="done-title track-conflict-title" id="trackConflictTitle">Track selection conflict</h2>
+        <div class="done-message">These media files are used on both a green included track and a faded ignored track. Choose the final action for every file.</div>
+        <div class="track-conflict-bulk-actions">
+            <button type="button" class="track-conflict-copy-all" onclick="setAllTrackConflictChoices('copy')">Copy all</button>
+            <button type="button" class="track-conflict-skip-all" onclick="setAllTrackConflictChoices('skip')">Do not copy all</button>
+        </div>
+        <div class="track-conflict-list" id="trackConflictList"></div>
+        <div class="track-conflict-status" id="trackConflictStatus"></div>
+        <div class="track-conflict-footer">
+            <button type="button" class="button-secondary" onclick="finishTrackConflictPrompt(false)">Cancel Backup</button>
+            <button type="button" class="button-primary" id="trackConflictContinueButton" onclick="finishTrackConflictPrompt(true)" disabled>Continue Backup</button>
+        </div>
     </div>
 </div>
 </body>

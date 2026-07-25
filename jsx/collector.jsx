@@ -267,6 +267,23 @@ function pcSequenceInfoJson(items) {
     return '[' + out.join(',') + ']';
 }
 
+function pcSequenceTrackUsageJson(items) {
+    var out = [];
+    var i;
+    for (i = 0; i < items.length; i++) {
+        var entry = items[i];
+        out.push(
+            '{' +
+            '"sequenceID":"' + pcJsonEscape(entry.sequenceID) + '",' +
+            '"sequenceName":"' + pcJsonEscape(entry.sequenceName) + '",' +
+            '"videoTrackUsage":' + pcTrackUsageJson(entry.videoTrackUsage) + ',' +
+            '"audioTrackUsage":' + pcTrackUsageJson(entry.audioTrackUsage) +
+            '}'
+        );
+    }
+    return '[' + out.join(',') + ']';
+}
+
 function pcBuildSequenceMap() {
     var sequenceMap = {};
     var nameMap = {};
@@ -756,12 +773,28 @@ function pcBuildPlan(destination) {
     var activeSequenceID = '';
     var videoTrackUsage = [];
     var audioTrackUsage = [];
+    var availableSequences = [];
 
     pcCollect(app.project.rootItem, '', folders, folderMap, tasks, taskMap, missingMedia);
 
     try {
         projectPath = app.project.path || '';
     } catch (eProjectPath) {}
+
+    try {
+        if (app.project.sequences) {
+            var sequenceIndex;
+            for (sequenceIndex = 0; sequenceIndex < app.project.sequences.numSequences; sequenceIndex++) {
+                var availableSequence = app.project.sequences[sequenceIndex];
+                if (availableSequence) {
+                    availableSequences.push({
+                        sequenceID: availableSequence.sequenceID || '',
+                        sequenceName: availableSequence.name || ''
+                    });
+                }
+            }
+        }
+    } catch (eSequences) {}
 
     try {
         if (app.project.activeSequence) {
@@ -779,6 +812,7 @@ function pcBuildPlan(destination) {
         tasks: tasks,
         missingMedia: missingMedia,
         projectPath: projectPath,
+        availableSequences: availableSequences,
         activeSequenceName: activeSequenceName,
         activeSequenceID: activeSequenceID,
         videoTrackUsage: videoTrackUsage,
@@ -796,6 +830,7 @@ function getProjectCopyPlan(destination) {
             '"tasks":' + pcTasksJson(plan.tasks) + ',' +
             '"missingMedia":' + pcStringsJson(plan.missingMedia) + ',' +
             '"projectPath":"' + pcJsonEscape(plan.projectPath) + '",' +
+            '"availableSequences":' + pcSequenceInfoJson(plan.availableSequences) + ',' +
             '"activeSequenceName":"' + pcJsonEscape(plan.activeSequenceName) + '",' +
             '"activeSequenceID":"' + pcJsonEscape(plan.activeSequenceID) + '",' +
             '"videoTrackUsage":' + pcTrackUsageJson(plan.videoTrackUsage) + ',' +
@@ -825,6 +860,61 @@ function getActiveSequenceTrackUsage() {
             '"sequenceID":"' + pcJsonEscape(activeSequenceID) + '",' +
             '"videoTrackUsage":' + pcTrackUsageJson(videoTrackUsage) + ',' +
             '"audioTrackUsage":' + pcTrackUsageJson(audioTrackUsage) +
+            '}';
+    } catch (e) {
+        return pcJsonError(e.toString());
+    }
+}
+
+function getSequenceTrackUsagePlan(filtersJson) {
+    try {
+        var filters = pcParseJsonArray(filtersJson);
+        var sequenceMaps = pcBuildSequenceMap();
+        var sequences = [];
+        var missingSequences = [];
+        var seenSequences = {};
+        var i;
+
+        for (i = 0; i < filters.length; i++) {
+            var filter = filters[i];
+            var sequence = pcFindSequenceFromFilter(filter, sequenceMaps);
+            if (!sequence) {
+                missingSequences.push(filter.sequenceName || filter.sequenceID || 'Unknown Sequence');
+                continue;
+            }
+
+            var sequenceID = '';
+            var sequenceName = '';
+            try {
+                sequenceID = sequence.sequenceID || filter.sequenceID || '';
+            } catch (eID) {
+                sequenceID = filter.sequenceID || '';
+            }
+            try {
+                sequenceName = sequence.name || filter.sequenceName || '';
+            } catch (eName) {
+                sequenceName = filter.sequenceName || '';
+            }
+
+            var sequenceKey = sequenceID
+                ? 'id:' + sequenceID
+                : 'name:' + String(sequenceName).toLowerCase();
+            if (seenSequences[sequenceKey]) {
+                continue;
+            }
+            seenSequences[sequenceKey] = true;
+
+            sequences.push({
+                sequenceID: sequenceID,
+                sequenceName: sequenceName,
+                videoTrackUsage: pcTrackCollectionUsage(sequence.videoTracks, 'V'),
+                audioTrackUsage: pcTrackCollectionUsage(sequence.audioTracks, 'A')
+            });
+        }
+
+        return '{' +
+            '"sequences":' + pcSequenceTrackUsageJson(sequences) + ',' +
+            '"missingSequences":' + pcStringsJson(missingSequences) +
             '}';
     } catch (e) {
         return pcJsonError(e.toString());
@@ -949,13 +1039,18 @@ function pcBuildRelinkMap(tasks) {
             continue;
         }
 
-        map[pcNormalizeRelinkPath(task.source)] = task.destination;
+        map[pcNormalizeRelinkPath(task.source)] = {
+            destination: task.destination,
+            targetKind: task.targetKind === 'collected'
+                ? 'collected'
+                : (task.targetKind === 'skip-location' ? 'skip-location' : 'original')
+        };
     }
 
     return map;
 }
 
-function pcRelinkProjectItems(item, relinkMap, result) {
+function pcCollectRelinkProjectItems(item, relinkMap, records, result) {
     if (!item || !item.children || item.children.numItems === undefined) {
         return;
     }
@@ -965,7 +1060,7 @@ function pcRelinkProjectItems(item, relinkMap, result) {
         var child = item.children[i];
 
         if (pcIsBin(child)) {
-            pcRelinkProjectItems(child, relinkMap, result);
+            pcCollectRelinkProjectItems(child, relinkMap, records, result);
             continue;
         }
 
@@ -974,77 +1069,316 @@ function pcRelinkProjectItems(item, relinkMap, result) {
         }
 
         var currentPath = '';
-        var newPath = '';
-
         try {
             currentPath = child.getMediaPath();
         } catch (e) {
-            currentPath = '';
+            result.failed.push((child.name || 'Unnamed project item') + ' | could not read original media path: ' + e.toString());
+            continue;
         }
 
-        newPath = relinkMap[pcNormalizeRelinkPath(currentPath)] || '';
-        if (!newPath) {
+        if (!currentPath || currentPath === '') {
+            result.skippedNoPathCount += 1;
+            continue;
+        }
+
+        var relinkTask = relinkMap[pcNormalizeRelinkPath(currentPath)];
+        records.push({
+            item: child,
+            name: child.name || currentPath,
+            source: currentPath,
+            destination: relinkTask && relinkTask.destination ? relinkTask.destination : currentPath,
+            targetKind: relinkTask && relinkTask.targetKind === 'collected'
+                ? 'collected'
+                : (relinkTask && relinkTask.targetKind === 'skip-location' ? 'skip-location' : 'original')
+        });
+    }
+}
+
+function pcOfflineRelinkRecords(records, result) {
+    var i;
+
+    for (i = 0; i < records.length; i++) {
+        var record = records[i];
+
+        if (!record.item || !record.item.setOffline) {
+            result.failed.push(record.name + ' | Premiere does not allow this file-backed item to be taken offline');
             continue;
         }
 
         try {
-            var changeResult = child.changeMediaPath(newPath, true);
-            if (changeResult === false) {
-                result.failed.push((child.name || currentPath) + ' | changeMediaPath returned false');
-            } else {
-                result.linkedCount += 1;
+            var alreadyOffline = false;
+            if (record.item.isOffline) {
+                try {
+                    alreadyOffline = record.item.isOffline() === true;
+                } catch (initialOfflineCheckError) {}
             }
-        } catch (e2) {
-            result.failed.push((child.name || currentPath) + ' | ' + e2.toString());
+
+            if (alreadyOffline) {
+                result.offlineCount += 1;
+                continue;
+            }
+
+            var offlineResult = record.item.setOffline();
+            var isOffline = offlineResult === true;
+
+            if (record.item.isOffline) {
+                try {
+                    isOffline = record.item.isOffline() === true;
+                } catch (offlineCheckError) {}
+            }
+
+            if (!isOffline) {
+                result.failed.push(record.name + ' | Premiere could not take the item offline');
+                continue;
+            }
+
+            result.offlineCount += 1;
+        } catch (e) {
+            result.failed.push(record.name + ' | could not take item offline: ' + e.toString());
+        }
+    }
+}
+
+function pcRelinkOfflineRecords(records, result) {
+    var i;
+
+    for (i = 0; i < records.length; i++) {
+        var record = records[i];
+
+        if (!record.item || !record.item.changeMediaPath) {
+            result.failed.push(record.name + ' | Premiere does not allow this item to change media path');
+            continue;
+        }
+
+        try {
+            var changeResult = record.item.changeMediaPath(record.destination, true);
+            var linkedPath = '';
+            var linkedSuccessfully = changeResult === 0 || changeResult === true;
+
+            try {
+                linkedPath = record.item.getMediaPath();
+            } catch (pathCheckError) {
+                linkedPath = '';
+            }
+
+            if (linkedPath && pcNormalizeRelinkPath(linkedPath) === pcNormalizeRelinkPath(record.destination)) {
+                linkedSuccessfully = true;
+            } else if (linkedPath) {
+                linkedSuccessfully = false;
+            }
+
+            if (!linkedSuccessfully) {
+                result.failed.push(record.name + ' | Premiere could not link to ' + record.destination);
+                continue;
+            }
+
+            result.linkedCount += 1;
+            if (record.targetKind === 'collected') {
+                result.linkedCollectedCount += 1;
+            } else if (record.targetKind === 'skip-location') {
+                result.linkedSkipLocationCount += 1;
+            } else {
+                result.linkedOriginalCount += 1;
+            }
+        } catch (e) {
+            result.failed.push(record.name + ' | could not link to ' + record.destination + ': ' + e.toString());
+        }
+    }
+}
+
+function pcFindOpenProjectByPath(projectPath) {
+    var normalizedTarget = pcNormalizeRelinkPath(projectPath);
+    var activeProject = null;
+
+    try {
+        activeProject = app && app.project ? app.project : null;
+        if (activeProject && pcNormalizeRelinkPath(activeProject.path || '') === normalizedTarget) {
+            return activeProject;
+        }
+    } catch (activeProjectError) {}
+
+    var projectCollections = [];
+    try {
+        if (app && app.projects) {
+            projectCollections.push(app.projects);
+        }
+    } catch (projectsError) {}
+    try {
+        if (app && app.production && app.production.projects) {
+            projectCollections.push(app.production.projects);
+        }
+    } catch (productionProjectsError) {}
+
+    var collectionIndex;
+    for (collectionIndex = 0; collectionIndex < projectCollections.length; collectionIndex++) {
+        var projects = projectCollections[collectionIndex];
+        var projectCount = 0;
+        try {
+            projectCount = projects.numProjects !== undefined ? projects.numProjects : projects.length;
+        } catch (projectCountError) {
+            projectCount = 0;
+        }
+
+        var projectIndex;
+        for (projectIndex = 0; projectIndex <= projectCount; projectIndex++) {
+            var candidate = null;
+            try {
+                candidate = projects[projectIndex];
+            } catch (candidateError) {
+                candidate = null;
+            }
+
+            try {
+                if (candidate && pcNormalizeRelinkPath(candidate.path || '') === normalizedTarget) {
+                    return candidate;
+                }
+            } catch (candidatePathError) {}
+        }
+    }
+
+    return null;
+}
+
+function pcCloseCopiedProjectAndRestoreOriginal(copiedProject, copiedProjectPath, originalProjectPath, result) {
+    if (copiedProject && copiedProject.closeDocument) {
+        try {
+            var closeResult = copiedProject.closeDocument(0, 0);
+            if (closeResult !== 0 && closeResult !== true && closeResult !== undefined) {
+                result.failed.push('Premiere could not close the BACKUP project after relinking.');
+                result.success = false;
+            }
+        } catch (closeError) {
+            result.failed.push('Could not close the BACKUP project: ' + closeError.toString());
+            result.success = false;
+        }
+    }
+
+    if (originalProjectPath && pcNormalizeRelinkPath(originalProjectPath) !== pcNormalizeRelinkPath(copiedProjectPath)) {
+        try {
+            var activeProjectPath = app && app.project ? (app.project.path || '') : '';
+            if (pcNormalizeRelinkPath(activeProjectPath) !== pcNormalizeRelinkPath(originalProjectPath)) {
+                app.openDocument(originalProjectPath, true, true, true, true);
+            }
+        } catch (reopenError) {
+            result.failed.push('Could not return to the original project: ' + reopenError.toString());
+            result.success = false;
         }
     }
 }
 
 function linkProjectCopyToCollectedMedia(projectCopyPath, tasksJson) {
     var originalProjectPath = '';
+    var originalProject = null;
+    var copiedProject = null;
+    var result = null;
 
     try {
         if (!app || !app.project) {
             throw new Error('No Premiere project is currently open.');
         }
 
-        originalProjectPath = app.project.path || '';
+        originalProject = app.project;
+        originalProjectPath = originalProject.path || '';
         if (!projectCopyPath || projectCopyPath === '') {
             throw new Error('Copied project path was not provided.');
         }
 
-        var tasks = pcParseJsonArray(tasksJson);
-        var relinkMap = pcBuildRelinkMap(tasks);
-        var openResult = app.openDocument(projectCopyPath, true, true, true, true);
-        var result = {
+        result = {
+            success: false,
+            offlineCount: 0,
             linkedCount: 0,
+            linkedCollectedCount: 0,
+            linkedSkipLocationCount: 0,
+            linkedOriginalCount: 0,
+            skippedNoPathCount: 0,
             failed: []
         };
-        var openedProjectPath = app.project.path || '';
 
-        if (pcNormalizeRelinkPath(openedProjectPath) !== pcNormalizeRelinkPath(projectCopyPath)) {
-            throw new Error('Premiere did not open the copied project for relinking.');
+        var copiedProjectFile = new File(projectCopyPath);
+        if (!copiedProjectFile.exists) {
+            throw new Error('Copied BACKUP project does not exist at ' + projectCopyPath);
         }
 
-        pcRelinkProjectItems(app.project.rootItem, relinkMap, result);
-        app.project.save();
+        var tasks = pcParseJsonArray(tasksJson);
+        var relinkMap = pcBuildRelinkMap(tasks);
+        if (!originalProject.closeDocument) {
+            throw new Error('This Premiere version cannot temporarily close the original project for safe BACKUP relinking.');
+        }
 
-        if (originalProjectPath && pcNormalizeRelinkPath(originalProjectPath) !== pcNormalizeRelinkPath(projectCopyPath)) {
-            try {
-                app.openDocument(originalProjectPath, true, true, true, true);
-            } catch (e2) {}
+        var originalSaveResult = originalProject.save();
+        if (originalSaveResult !== 0 && originalSaveResult !== true && originalSaveResult !== undefined) {
+            throw new Error('Premiere could not save the original project before BACKUP relinking.');
+        }
+
+        var originalCloseResult = originalProject.closeDocument(0, 0);
+        if (originalCloseResult !== 0 && originalCloseResult !== true && originalCloseResult !== undefined) {
+            throw new Error('Premiere could not temporarily close the original project before opening the BACKUP.');
+        }
+
+        var openResult = app.openDocument(projectCopyPath, true, true, true, true);
+        var records = [];
+        copiedProject = pcFindOpenProjectByPath(projectCopyPath);
+
+        if (!copiedProject) {
+            throw new Error('Premiere did not open the copied BACKUP project after the original was closed. openDocument returned: ' + openResult);
+        }
+
+        pcCollectRelinkProjectItems(copiedProject.rootItem, relinkMap, records, result);
+
+        if (result.failed.length === 0) {
+            pcOfflineRelinkRecords(records, result);
+        }
+
+        if (result.failed.length === 0 && result.offlineCount !== records.length) {
+            result.failed.push('Premiere did not take every file-backed project item offline.');
+        }
+
+        if (result.failed.length === 0) {
+            pcRelinkOfflineRecords(records, result);
+        }
+
+        if (result.failed.length === 0 && result.linkedCount !== records.length) {
+            result.failed.push('Premiere did not relink every file-backed project item.');
+        }
+
+        if (result.failed.length === 0) {
+            var saveResult = copiedProject.save();
+            if (saveResult === 0 || saveResult === true || saveResult === undefined) {
+                result.success = true;
+            } else {
+                result.failed.push('Premiere could not save the relinked BACKUP project.');
+            }
+        }
+
+        if (!result.success) {
+            pcCloseCopiedProjectAndRestoreOriginal(copiedProject, projectCopyPath, originalProjectPath, result);
         }
 
         return '{' +
-            '"success":true,' +
+            '"success":' + (result.success ? 'true' : 'false') + ',' +
             '"opened":"' + pcJsonEscape(openResult) + '",' +
+            '"offlineCount":' + result.offlineCount + ',' +
             '"linkedCount":' + result.linkedCount + ',' +
+            '"linkedCollectedCount":' + result.linkedCollectedCount + ',' +
+            '"linkedSkipLocationCount":' + result.linkedSkipLocationCount + ',' +
+            '"linkedOriginalCount":' + result.linkedOriginalCount + ',' +
+            '"skippedNoPathCount":' + result.skippedNoPathCount + ',' +
+            '"backupLeftOpen":' + (result.success ? 'true' : 'false') + ',' +
             '"failed":' + pcStringsJson(result.failed) +
             '}';
     } catch (e) {
+        if (result) {
+            result.success = false;
+            result.failed.push(e.toString());
+            pcCloseCopiedProjectAndRestoreOriginal(copiedProject, projectCopyPath, originalProjectPath, result);
+        }
+
         if (originalProjectPath && pcNormalizeRelinkPath(originalProjectPath) !== pcNormalizeRelinkPath(projectCopyPath)) {
             try {
-                app.openDocument(originalProjectPath, true, true, true, true);
+                var recoveryProjectPath = app && app.project ? (app.project.path || '') : '';
+                if (pcNormalizeRelinkPath(recoveryProjectPath) !== pcNormalizeRelinkPath(originalProjectPath)) {
+                    app.openDocument(originalProjectPath, true, true, true, true);
+                }
             } catch (e2) {}
         }
 

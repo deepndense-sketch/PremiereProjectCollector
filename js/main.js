@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const childProcess = require('child_process');
 const { spawn } = childProcess;
 
@@ -19,6 +20,9 @@ let selectionTouched = false;
 let localVersion = 'unknown';
 let remoteVersion = null;
 let selectedSequenceFilters = [];
+let trackPresets = [];
+let trackPresetsLoaded = false;
+let trackPresetIdCounter = 0;
 let sequenceOnlyMode = false;
 let createReducedProject = false;
 let copyProjectFile = true;
@@ -29,8 +33,12 @@ let trackRangeAnchor = null;
 let folderRangeAnchor = null;
 let trackClickTimer = null;
 let folderClickTimer = null;
+let trackConflictPromptResolver = null;
+let trackConflictPromptState = null;
 
+const PLUGIN_STORAGE_PREFIX = 'projectcollector.';
 const SEQUENCE_FILTERS_STORAGE_KEY = 'projectcollector.sequenceFilters';
+const TRACK_PRESETS_STORAGE_KEY = 'projectcollector.trackPresets';
 const DESTINATION_STORAGE_KEY = 'projectcollector.destination';
 const IGNORE_SECTION_VISIBLE_STORAGE_KEY = 'projectcollector.ignoreSectionVisible';
 const SEQUENCE_ONLY_MODE_STORAGE_KEY = 'projectcollector.sequenceOnlyMode';
@@ -507,14 +515,7 @@ function sanitizeFileName(name, fallback) {
 
 function getCollectedProjectFileName(projectPath) {
     const extension = path.extname(projectPath || '') || '.prproj';
-    const sequenceNames = sequenceOnlyMode
-        ? selectedSequenceFilters
-            .filter((filter) => filter && filter.sequenceName)
-            .map((filter) => filter.sequenceName)
-        : [];
-    const baseName = sequenceNames.length === 1
-        ? sequenceNames[0]
-        : (latestPlan && latestPlan.projectName ? latestPlan.projectName : path.basename(projectPath || 'Premiere_Project', extension));
+    const baseName = path.basename(projectPath || 'Premiere_Project', extension);
 
     return `${sanitizeFileName(`${baseName} BACKUP`, 'Premiere_Project BACKUP')}${extension}`;
 }
@@ -735,17 +736,43 @@ function buildCompareLookup(files) {
         if (Number.isFinite(Number(file.size))) {
             const key = buildCompareSizeKey(fileName, Number(file.size));
             if (!byNameAndSize.has(key)) {
-                byNameAndSize.set(key, file);
+                byNameAndSize.set(key, []);
             }
+            byNameAndSize.get(key).push(file);
         }
     });
 
     return {
-        byNameAndSize
+        byNameAndSize,
+        hashByPath: new Map()
     };
 }
 
-function findCompareMatchForTask(task, lookup) {
+function getFileSha256(filePath, hashCache) {
+    const cache = hashCache || new Map();
+    const cacheKey = normalizeMediaKey(filePath);
+    if (cache.has(cacheKey)) {
+        return cache.get(cacheKey);
+    }
+
+    const hashPromise = new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const stream = fs.createReadStream(filePath);
+
+        stream.on('error', reject);
+        stream.on('data', (chunk) => hash.update(chunk));
+        stream.on('end', () => resolve(hash.digest('hex')));
+    });
+    cache.set(cacheKey, hashPromise);
+    hashPromise.catch(() => {
+        if (cache.get(cacheKey) === hashPromise) {
+            cache.delete(cacheKey);
+        }
+    });
+    return hashPromise;
+}
+
+async function findCompareMatchForTask(task, lookup) {
     if (!task || !lookup) {
         return null;
     }
@@ -760,7 +787,31 @@ function findCompareMatchForTask(task, lookup) {
         return null;
     }
 
-    return lookup.byNameAndSize.get(buildCompareSizeKey(signature.fileName, signature.size)) || null;
+    const candidates = lookup.byNameAndSize.get(buildCompareSizeKey(signature.fileName, signature.size)) || [];
+    if (!candidates.length) {
+        return null;
+    }
+
+    let sourceHash = '';
+    try {
+        sourceHash = await getFileSha256(task.source, lookup.hashByPath);
+    } catch (error) {
+        return null;
+    }
+
+    for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        try {
+            const candidateHash = await getFileSha256(candidate.path, lookup.hashByPath);
+            if (candidateHash === sourceHash) {
+                return Object.assign({}, candidate, {
+                    sha256: candidateHash
+                });
+            }
+        } catch (error) {}
+    }
+
+    return null;
 }
 
 async function inspectCompareLocation() {
@@ -1040,12 +1091,16 @@ function isTaskInsideProjectFolder(task, folderPath) {
     return taskFolder === ignoredFolder || taskFolder.indexOf(`${ignoredFolder}/`) === 0;
 }
 
+function isTaskInsideProjectFolderList(task, folderPaths) {
+    return (folderPaths || []).some((folderPath) => isTaskInsideProjectFolder(task, folderPath));
+}
+
 function isTaskInsideIgnoredProjectFolder(task) {
-    return ignoredProjectFolders.some((folderPath) => isTaskInsideProjectFolder(task, folderPath));
+    return isTaskInsideProjectFolderList(task, ignoredProjectFolders);
 }
 
 function isTaskInsideIncludedProjectFolder(task) {
-    return includedProjectFolders.some((folderPath) => isTaskInsideProjectFolder(task, folderPath));
+    return isTaskInsideProjectFolderList(task, includedProjectFolders);
 }
 
 function splitRelativeDestination(relativePath) {
@@ -1174,6 +1229,7 @@ function createSequenceFilter(sequenceID, sequenceName, videoTrackUsage, audioTr
         audioTrackUsage: sanitizeTrackUsageEntries(audioTrackUsage, 'A'),
         ignoredVideoTracks: [],
         ignoredAudioTracks: [],
+        selectedPresetId: '',
         locked: !!locked
     };
 }
@@ -1187,9 +1243,15 @@ function sanitizeSequenceFilter(rawFilter, locked) {
     filter.ignoredAudioTracks = Array.isArray(rawFilter.ignoredAudioTracks)
         ? rawFilter.ignoredAudioTracks.map((value) => parseInt(value, 10) || 0).filter((value) => value > 0)
         : [];
+    filter.selectedPresetId = typeof rawFilter.selectedPresetId === 'string'
+        ? rawFilter.selectedPresetId
+        : '';
 
     filter.ignoredVideoTracks = Array.from(new Set(filter.ignoredVideoTracks)).sort((a, b) => a - b);
     filter.ignoredAudioTracks = Array.from(new Set(filter.ignoredAudioTracks)).sort((a, b) => a - b);
+    if (filter.selectedPresetId && !trackPresets.some((preset) => preset.id === filter.selectedPresetId)) {
+        filter.selectedPresetId = '';
+    }
     filter.locked = !!locked;
     return filter;
 }
@@ -1204,33 +1266,340 @@ function getDefaultSequenceFilter() {
         latestPlan.activeSequenceName,
         latestPlan.videoTrackUsage || [],
         latestPlan.audioTrackUsage || [],
-        true
+        false
     );
 }
 
-function loadSequenceFilters() {
-    let savedFilters = [];
+function sanitizePresetTrackNumbers(values) {
+    return Array.from(new Set(
+        (Array.isArray(values) ? values : [])
+            .map((value) => parseInt(value, 10) || 0)
+            .filter((value) => value > 0)
+    )).sort((left, right) => left - right);
+}
+
+function sanitizeTrackPreset(rawPreset, index) {
+    if (!rawPreset || !String(rawPreset.name || '').trim()) {
+        return null;
+    }
+
+    const name = String(rawPreset.name).trim();
+    const fallbackId = `preset-${index + 1}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'track'}`;
+    return {
+        id: String(rawPreset.id || fallbackId),
+        name,
+        ignoredVideoTracks: sanitizePresetTrackNumbers(rawPreset.ignoredVideoTracks),
+        ignoredAudioTracks: sanitizePresetTrackNumbers(rawPreset.ignoredAudioTracks)
+    };
+}
+
+function loadTrackPresets() {
+    let parsedPresets = [];
 
     try {
-        const parsed = JSON.parse(localStorage.getItem(SEQUENCE_FILTERS_STORAGE_KEY) || '[]');
+        const parsed = JSON.parse(localStorage.getItem(TRACK_PRESETS_STORAGE_KEY) || '[]');
+        parsedPresets = Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        parsedPresets = [];
+    }
+
+    const seenIds = new Set();
+    const seenNames = new Set();
+    trackPresets = parsedPresets.reduce((result, rawPreset, index) => {
+        const preset = sanitizeTrackPreset(rawPreset, index);
+        const normalizedName = preset ? preset.name.toLowerCase() : '';
+        if (!preset || seenIds.has(preset.id) || seenNames.has(normalizedName)) {
+            return result;
+        }
+        seenIds.add(preset.id);
+        seenNames.add(normalizedName);
+        result.push(preset);
+        return result;
+    }, []);
+    trackPresetsLoaded = true;
+}
+
+function saveTrackPresets() {
+    try {
+        localStorage.setItem(TRACK_PRESETS_STORAGE_KEY, JSON.stringify(trackPresets));
+    } catch (error) {}
+}
+
+function clearStoredPluginSessionData() {
+    const keysToRemove = [];
+
+    try {
+        for (let index = 0; index < localStorage.length; index += 1) {
+            const key = localStorage.key(index);
+            if (
+                key
+                && key.indexOf(PLUGIN_STORAGE_PREFIX) === 0
+                && key !== TRACK_PRESETS_STORAGE_KEY
+                && key !== DESTINATION_STORAGE_KEY
+            ) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach((key) => localStorage.removeItem(key));
+    } catch (error) {}
+
+    return keysToRemove;
+}
+
+function deletePluginRelatedData() {
+    const shouldDelete = typeof window.confirm !== 'function'
+        || window.confirm('Delete saved project, sequence, track-selection, and panel-option data? Track presets and the saved destination will be kept.');
+    if (!shouldDelete) {
+        return false;
+    }
+
+    const removedKeys = clearStoredPluginSessionData();
+    const status = document.getElementById('dataCleanupStatus');
+    if (status) {
+        status.textContent = removedKeys.length
+            ? `Deleted ${removedKeys.length} saved data item${removedKeys.length === 1 ? '' : 's'}.`
+            : 'No saved project data found.';
+    }
+    return true;
+}
+
+function getTrackPresetById(presetId) {
+    return trackPresets.find((preset) => preset.id === presetId) || null;
+}
+
+function getNextTrackPresetName(presets) {
+    const names = new Set(
+        (Array.isArray(presets) ? presets : trackPresets)
+            .map((preset) => String(preset && preset.name || '').trim().toLowerCase())
+            .filter(Boolean)
+    );
+    let number = 1;
+    while (names.has(`project copy preset ${number}`)) {
+        number += 1;
+    }
+    return `Project Copy Preset ${number}`;
+}
+
+function trackNumberListsMatch(left, right) {
+    const normalizedLeft = sanitizePresetTrackNumbers(left);
+    const normalizedRight = sanitizePresetTrackNumbers(right);
+    return normalizedLeft.length === normalizedRight.length
+        && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function findTrackPresetByFilterSettings(filter) {
+    if (!filter) {
+        return null;
+    }
+
+    return trackPresets.find((preset) => (
+        trackNumberListsMatch(preset.ignoredVideoTracks, filter.ignoredVideoTracks)
+        && trackNumberListsMatch(preset.ignoredAudioTracks, filter.ignoredAudioTracks)
+    )) || null;
+}
+
+function createTrackPresetId() {
+    let presetId = '';
+    do {
+        trackPresetIdCounter += 1;
+        presetId = `track-preset-${Date.now()}-${trackPresetIdCounter}`;
+    } while (getTrackPresetById(presetId));
+    return presetId;
+}
+
+function upsertTrackPresetFromFilter(filter, requestedName) {
+    if (!filter) {
+        return null;
+    }
+
+    const name = String(requestedName || '').trim();
+    if (!name) {
+        return null;
+    }
+
+    const existing = trackPresets.find((preset) => preset.name.toLowerCase() === name.toLowerCase());
+    const preset = existing || {
+        id: createTrackPresetId(),
+        name,
+        ignoredVideoTracks: [],
+        ignoredAudioTracks: []
+    };
+
+    preset.name = name;
+    preset.ignoredVideoTracks = sanitizePresetTrackNumbers(filter.ignoredVideoTracks);
+    preset.ignoredAudioTracks = sanitizePresetTrackNumbers(filter.ignoredAudioTracks);
+    if (!existing) {
+        trackPresets.push(preset);
+    }
+    return preset;
+}
+
+function getSequenceTrackNumbers(filter, kind) {
+    const usage = kind === 'video' ? filter.videoTrackUsage : filter.audioTrackUsage;
+    return new Set(
+        (Array.isArray(usage) ? usage : [])
+            .map((entry) => parseInt(entry && entry.trackNumber, 10) || 0)
+            .filter((trackNumber) => trackNumber > 0)
+    );
+}
+
+function applyTrackPresetToFilter(filter, preset) {
+    if (!filter || !preset) {
+        return false;
+    }
+
+    const videoTracks = getSequenceTrackNumbers(filter, 'video');
+    const audioTracks = getSequenceTrackNumbers(filter, 'audio');
+    filter.ignoredVideoTracks = preset.ignoredVideoTracks.filter((trackNumber) => videoTracks.has(trackNumber));
+    filter.ignoredAudioTracks = preset.ignoredAudioTracks.filter((trackNumber) => audioTracks.has(trackNumber));
+    filter.selectedPresetId = preset.id;
+    return true;
+}
+
+function applyTrackPresetToSequence(sequenceKey, presetId) {
+    const filter = getSequenceFilterByKey(sequenceKey);
+    if (!filter) {
+        return false;
+    }
+
+    if (!presetId) {
+        filter.selectedPresetId = '';
+        saveAndRenderTrackFilters();
+        return true;
+    }
+
+    const preset = getTrackPresetById(presetId);
+    if (!applyTrackPresetToFilter(filter, preset)) {
+        return false;
+    }
+
+    if (trackRangeAnchor && trackRangeAnchor.sequenceKey === sequenceKey) {
+        trackRangeAnchor = null;
+    }
+    saveAndRenderTrackFilters();
+    return true;
+}
+
+function saveTrackPresetForSequence(sequenceKey) {
+    const filter = getSequenceFilterByKey(sequenceKey);
+    if (!filter) {
+        return;
+    }
+
+    const duplicatePreset = findTrackPresetByFilterSettings(filter);
+    if (duplicatePreset) {
+        applyTrackPresetToFilter(filter, duplicatePreset);
+        saveSequenceFilters();
+        renderSequenceFilters();
+        updateSelectionSummary();
+        alert(`This track setting already exists as "${duplicatePreset.name}".`);
+        return;
+    }
+
+    const defaultName = getNextTrackPresetName(trackPresets);
+    const requestedName = window.prompt('Preset name', defaultName);
+    if (requestedName === null) {
+        return;
+    }
+
+    const preset = upsertTrackPresetFromFilter(filter, String(requestedName).trim() || defaultName);
+    if (!preset) {
+        return;
+    }
+
+    selectedSequenceFilters.forEach((sequenceFilter) => {
+        if (sequenceFilter === filter || sequenceFilter.selectedPresetId === preset.id) {
+            applyTrackPresetToFilter(sequenceFilter, preset);
+        }
+    });
+    trackRangeAnchor = null;
+    saveTrackPresets();
+    saveSequenceFilters();
+    renderSequenceFilters();
+    updateSelectionSummary();
+}
+
+function deleteTrackPreset(presetId) {
+    const preset = getTrackPresetById(presetId);
+    if (!preset) {
+        return false;
+    }
+
+    trackPresets = trackPresets.filter((candidate) => candidate.id !== presetId);
+    selectedSequenceFilters.forEach((filter) => {
+        if (filter.selectedPresetId === presetId) {
+            filter.selectedPresetId = '';
+        }
+    });
+    saveTrackPresets();
+    saveSequenceFilters();
+    return true;
+}
+
+function deleteSelectedTrackPresetForSequence(sequenceKey) {
+    const filter = getSequenceFilterByKey(sequenceKey);
+    const preset = filter ? getTrackPresetById(filter.selectedPresetId) : null;
+    if (!preset) {
+        return;
+    }
+
+    if (typeof window.confirm === 'function' && !window.confirm(`Delete preset "${preset.name}"?`)) {
+        return;
+    }
+
+    if (deleteTrackPreset(preset.id)) {
+        renderSequenceFilters();
+        updateSelectionSummary();
+    }
+}
+
+function loadSequenceFilters() {
+    if (!trackPresetsLoaded) {
+        loadTrackPresets();
+    }
+
+    let savedFilters = [];
+    let hasStoredFilters = false;
+
+    const storageKey = getSequenceFiltersStorageKey();
+
+    try {
+        const storedFilters = localStorage.getItem(storageKey);
+        hasStoredFilters = storedFilters !== null;
+        const parsed = JSON.parse(storedFilters || '[]');
         savedFilters = Array.isArray(parsed) ? parsed : [];
     } catch (error) {
         savedFilters = [];
     }
 
+    const availableSequences = latestPlan && Array.isArray(latestPlan.availableSequences)
+        ? latestPlan.availableSequences
+        : null;
+    const hadSavedSequenceEntries = savedFilters.some((filter) => filter && filter.sequenceName);
+
     selectedSequenceFilters = savedFilters
         .filter((filter) => filter && filter.sequenceName)
-        .map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+        .filter((filter) => !availableSequences || isSequenceFilterAvailable(filter, availableSequences))
+        .map((filter) => sanitizeSequenceFilter(filter, false));
 
     const defaultFilter = getDefaultSequenceFilter();
     if (!defaultFilter) {
+        selectedSequenceFilters.forEach((filter) => {
+            const preset = getTrackPresetById(filter.selectedPresetId);
+            if (preset) {
+                applyTrackPresetToFilter(filter, preset);
+            }
+        });
+        saveSequenceFilters();
         renderSequenceFilters();
         return;
     }
 
     if (!selectedSequenceFilters.length) {
-        selectedSequenceFilters = [defaultFilter];
-        saveSequenceFilters();
+        if (!hasStoredFilters || hadSavedSequenceEntries) {
+            selectedSequenceFilters = [defaultFilter];
+            saveSequenceFilters();
+        }
         renderSequenceFilters();
         return;
     }
@@ -1241,20 +1610,49 @@ function loadSequenceFilters() {
         existing.videoTrackUsage = defaultFilter.videoTrackUsage;
         existing.audioTrackUsage = defaultFilter.audioTrackUsage;
         existing.sequenceID = defaultFilter.sequenceID || existing.sequenceID;
-        if (defaultIndex === 0) {
-            existing.locked = true;
-        }
     }
 
-    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+    selectedSequenceFilters = selectedSequenceFilters.map((filter) => sanitizeSequenceFilter(filter, false));
+    selectedSequenceFilters.forEach((filter) => {
+        const preset = getTrackPresetById(filter.selectedPresetId);
+        if (preset) {
+            applyTrackPresetToFilter(filter, preset);
+        }
+    });
     saveSequenceFilters();
     renderSequenceFilters();
 }
 
 function saveSequenceFilters() {
     try {
-        localStorage.setItem(SEQUENCE_FILTERS_STORAGE_KEY, JSON.stringify(selectedSequenceFilters));
+        localStorage.setItem(getSequenceFiltersStorageKey(), JSON.stringify(selectedSequenceFilters));
     } catch (error) {}
+}
+
+function getSequenceFiltersStorageKey(plan) {
+    const projectPlan = plan || latestPlan || {};
+    const projectIdentity = projectPlan.projectPath
+        ? normalizeMediaKey(projectPlan.projectPath)
+        : `unsaved:${String(projectPlan.projectName || 'premiere-project').toLowerCase()}`;
+    return `${SEQUENCE_FILTERS_STORAGE_KEY}:${projectIdentity}`;
+}
+
+function isSequenceFilterAvailable(filter, availableSequences) {
+    const sequences = Array.isArray(availableSequences) ? availableSequences : [];
+    if (!filter || !sequences.length) {
+        return false;
+    }
+
+    if (filter.sequenceID) {
+        return sequences.some((sequence) => sequence && sequence.sequenceID === filter.sequenceID);
+    }
+
+    const sequenceName = String(filter.sequenceName || '').toLowerCase();
+    return sequences.some((sequence) => (
+        sequence
+        && sequenceName
+        && String(sequence.sequenceName || '').toLowerCase() === sequenceName
+    ));
 }
 
 function getSequenceFilterByKey(sequenceKey) {
@@ -1295,6 +1693,74 @@ function saveAndRenderTrackFilters() {
     renderSequenceFilters();
 }
 
+function clearTrackChoices(filters, sequenceKey) {
+    const targetKey = sequenceKey || '';
+    let resetCount = 0;
+
+    (Array.isArray(filters) ? filters : []).forEach((filter) => {
+        if (!targetKey || getSequenceFilterKey(filter) === targetKey) {
+            filter.ignoredVideoTracks = [];
+            filter.ignoredAudioTracks = [];
+            filter.selectedPresetId = '';
+            resetCount += 1;
+        }
+    });
+
+    return resetCount;
+}
+
+function findSequenceTrackUsage(filter, usageEntries) {
+    const entries = Array.isArray(usageEntries) ? usageEntries : [];
+    if (filter.sequenceID) {
+        const idMatch = entries.find((entry) => entry && entry.sequenceID === filter.sequenceID);
+        if (idMatch) {
+            return idMatch;
+        }
+    }
+
+    const normalizedName = String(filter.sequenceName || '').toLowerCase();
+    return entries.find((entry) => (
+        entry
+        && normalizedName
+        && String(entry.sequenceName || '').toLowerCase() === normalizedName
+    )) || null;
+}
+
+function applySequenceTrackUsagePlan(filters, plan, resetChoices) {
+    const usageEntries = plan && Array.isArray(plan.sequences) ? plan.sequences : [];
+    const result = {
+        refreshedCount: 0,
+        missingSequences: [],
+        resetCount: 0
+    };
+
+    (Array.isArray(filters) ? filters : []).forEach((filter) => {
+        if (resetChoices) {
+            filter.ignoredVideoTracks = [];
+            filter.ignoredAudioTracks = [];
+            filter.selectedPresetId = '';
+            result.resetCount += 1;
+        }
+
+        const incoming = findSequenceTrackUsage(filter, usageEntries);
+        if (!incoming) {
+            result.missingSequences.push(filter.sequenceName || filter.sequenceID || 'Unknown Sequence');
+            return;
+        }
+
+        mergeSequenceTrackUsage(filter, createSequenceFilter(
+            incoming.sequenceID || filter.sequenceID,
+            incoming.sequenceName || filter.sequenceName,
+            incoming.videoTrackUsage || [],
+            incoming.audioTrackUsage || [],
+            filter.locked
+        ));
+        result.refreshedCount += 1;
+    });
+
+    return result;
+}
+
 function toggleIgnoredTrack(sequenceKey, kind, trackNumber) {
     const filter = getSequenceFilterByKey(sequenceKey);
     if (!filter || !trackNumber) {
@@ -1311,6 +1777,7 @@ function toggleIgnoredTrack(sequenceKey, kind, trackNumber) {
         ignored.splice(existingIndex, 1);
     }
 
+    filter.selectedPresetId = '';
     setIgnoredTrackList(filter, kind, ignored);
     saveAndRenderTrackFilters();
 }
@@ -1337,6 +1804,7 @@ function ignoreTrackRange(anchor, filter, kind, trackNumber) {
     }
 
     trackRangeAnchor = null;
+    filter.selectedPresetId = '';
     setIgnoredTrackList(filter, kind, ignored);
     saveAndRenderTrackFilters();
 }
@@ -1364,7 +1832,7 @@ function handleTrackButtonDoubleClick(filter, kind, trackNumber) {
 function renderTrackButtonGroup(filter, kind) {
     const entries = getVisibleTrackEntries(filter, kind);
     const list = document.createElement('div');
-    list.className = 'choice-grid';
+    list.className = 'choice-grid track-choice-grid';
 
     if (!entries.length) {
         const empty = document.createElement('div');
@@ -1384,9 +1852,10 @@ function renderTrackButtonGroup(filter, kind) {
             && trackRangeAnchor.trackNumber === entry.trackNumber;
         const ignored = isTrackIgnored(filter, kind, entry.trackNumber);
 
-        item.className = 'choice-item';
+        item.className = 'choice-item track-choice-item';
         button.type = 'button';
-        button.className = `choice-button${ignored ? ' is-ignored' : ''}${isAnchor ? ' is-range-anchor' : ''}`;
+        button.className = `choice-button track-choice-button${ignored ? ' is-ignored' : ''}${isAnchor ? ' is-range-anchor' : ''}`;
+        button.title = `${kind === 'video' ? 'Video' : 'Audio'} track ${entry.trackNumber}: ${entry.clipCount} ${entry.clipCount === 1 ? 'clip' : 'clips'}`;
         button.onclick = (event) => {
             if (event.detail === 1) {
                 handleTrackButtonClick(filter, kind, entry.trackNumber);
@@ -1399,11 +1868,7 @@ function renderTrackButtonGroup(filter, kind) {
         title.textContent = `${kind === 'video' ? 'V' : 'A'}${entry.trackNumber}`;
         button.appendChild(title);
 
-        const meta = document.createElement('span');
-        meta.className = 'choice-meta';
-        meta.textContent = `${entry.clipCount} ${entry.clipCount === 1 ? 'clip' : 'clips'}`;
         item.appendChild(button);
-        item.appendChild(meta);
 
         list.appendChild(item);
     });
@@ -1425,6 +1890,56 @@ function renderSequenceGroup(filter, kind) {
     return group;
 }
 
+function renderSequencePresetSection(filter) {
+    const sequenceKey = getSequenceFilterKey(filter);
+    const section = document.createElement('div');
+    section.className = 'sequence-preset-section';
+
+    const select = document.createElement('select');
+    select.className = 'sequence-preset-select';
+    select.setAttribute('aria-label', `Track preset for ${filter.sequenceName}`);
+
+    const customOption = document.createElement('option');
+    customOption.value = '';
+    customOption.textContent = 'Custom tracks';
+    select.appendChild(customOption);
+
+    trackPresets.forEach((preset) => {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.name;
+        select.appendChild(option);
+    });
+
+    select.value = getTrackPresetById(filter.selectedPresetId) ? filter.selectedPresetId : '';
+    select.onchange = () => applyTrackPresetToSequence(sequenceKey, select.value);
+    section.appendChild(select);
+
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'button-secondary button-small sequence-preset-save';
+    saveButton.textContent = 'Save preset';
+    saveButton.onclick = () => saveTrackPresetForSequence(sequenceKey);
+    section.appendChild(saveButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'button-danger-soft button-small sequence-preset-delete';
+    deleteButton.textContent = 'Delete';
+    deleteButton.disabled = !getTrackPresetById(filter.selectedPresetId);
+    deleteButton.onclick = () => deleteSelectedTrackPresetForSequence(sequenceKey);
+    section.appendChild(deleteButton);
+
+    const resetButton = document.createElement('button');
+    resetButton.type = 'button';
+    resetButton.className = 'button-secondary button-small sequence-reset-button';
+    resetButton.textContent = 'Reset tracks';
+    resetButton.onclick = () => resetTrackSelection(sequenceKey);
+    section.appendChild(resetButton);
+
+    return section;
+}
+
 function renderSequenceFilters() {
     const container = document.getElementById('sequenceFilters');
     const hint = document.getElementById('sequenceFilterHint');
@@ -1433,9 +1948,9 @@ function renderSequenceFilters() {
     if (!selectedSequenceFilters.length) {
         const empty = document.createElement('div');
         empty.className = 'small-note';
-        empty.textContent = 'No sequences selected yet. Open a sequence in Premiere and add it here.';
+        empty.textContent = 'No sequences selected.';
         container.appendChild(empty);
-        hint.textContent = 'Switch to a sequence in Premiere, then click Add Current Active Sequence.';
+        hint.textContent = 'Open a sequence, then add it.';
         updateSelectionSummary();
         return;
     }
@@ -1448,6 +1963,7 @@ function renderSequenceFilters() {
         header.className = 'sequence-header';
 
         const titleWrap = document.createElement('div');
+        titleWrap.className = 'sequence-title-wrap';
         const title = document.createElement('div');
         title.className = 'sequence-title';
         title.textContent = `Seq ${index + 1}: ${filter.sequenceName}`;
@@ -1455,22 +1971,25 @@ function renderSequenceFilters() {
 
         const subtitle = document.createElement('div');
         subtitle.className = 'sequence-subtitle';
-        subtitle.textContent = filter.locked
-            ? 'Current active sequence loaded by default. Use Refresh Project after changing it in Premiere.'
-            : 'Added from another active sequence. Remove it anytime if you no longer want its track filters.';
+        subtitle.textContent = 'Selected sequence';
         titleWrap.appendChild(subtitle);
         header.appendChild(titleWrap);
 
-        if (!filter.locked) {
-            const removeButton = document.createElement('button');
-            removeButton.type = 'button';
-            removeButton.className = 'button-danger-soft button-small';
-            removeButton.textContent = 'x';
-            removeButton.onclick = () => removeSequenceFilter(filter.sequenceID || filter.sequenceName);
-            header.appendChild(removeButton);
-        }
+        const headerActions = document.createElement('div');
+        headerActions.className = 'sequence-header-actions';
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'button-danger-soft button-small sequence-remove-button';
+        removeButton.textContent = '×';
+        removeButton.title = `Remove ${filter.sequenceName}`;
+        removeButton.setAttribute('aria-label', `Remove ${filter.sequenceName}`);
+        removeButton.onclick = () => removeSequenceFilter(filter.sequenceID || filter.sequenceName);
+        headerActions.appendChild(removeButton);
+        header.appendChild(headerActions);
 
         card.appendChild(header);
+        card.appendChild(renderSequencePresetSection(filter));
 
         const groups = document.createElement('div');
         groups.className = 'sequence-groups';
@@ -1481,7 +2000,7 @@ function renderSequenceFilters() {
         container.appendChild(card);
     });
 
-    hint.textContent = 'Nested sequence media is collected correctly even when a visible track count only reflects direct clips. Refresh Project updates counts and keeps your green/faded choices.';
+    hint.textContent = 'Refresh reloads and resets every selected sequence.';
     updateSelectionSummary();
 }
 
@@ -1523,56 +2042,63 @@ async function addCurrentActiveSequence() {
     if (existingIndex >= 0) {
         const existing = selectedSequenceFilters[existingIndex];
         mergeSequenceTrackUsage(existing, incoming);
-        if (existingIndex === 0) {
-            existing.locked = true;
-        }
     } else {
         selectedSequenceFilters.push(incoming);
     }
 
-    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+    selectedSequenceFilters = selectedSequenceFilters.map((filter) => sanitizeSequenceFilter(filter, false));
     saveSequenceFilters();
     renderSequenceFilters();
 }
 
-async function refreshTrackSelection() {
-    if (isCopying) {
-        return;
+async function refreshAllSelectedSequenceTracks(resetChoices) {
+    if (!selectedSequenceFilters.length) {
+        return {
+            refreshedCount: 0,
+            missingSequences: [],
+            resetCount: 0
+        };
     }
 
-    if (!(await ensureHostScriptLoaded())) {
-        return;
+    const filtersPayload = selectedSequenceFilters.map((filter) => ({
+        sequenceID: filter.sequenceID || '',
+        sequenceName: filter.sequenceName || ''
+    }));
+    const raw = await callHost(`getSequenceTrackUsagePlan("${escapeForEvalScript(JSON.stringify(filtersPayload))}")`);
+    const plan = safeJsonParse(raw);
+
+    if (!plan || plan.error || !Array.isArray(plan.sequences)) {
+        throw new Error(plan && plan.error
+            ? `Could not refresh selected sequence tracks: ${plan.error}`
+            : `Could not refresh selected sequence tracks. Raw response: ${raw}`);
     }
 
-    const incoming = await readCurrentActiveSequenceFilter(false);
-    if (!incoming) {
-        return;
-    }
-
-    const existingIndex = selectedSequenceFilters.findIndex((filter) => (filter.sequenceID && filter.sequenceID === incoming.sequenceID) || filter.sequenceName === incoming.sequenceName);
-    if (existingIndex === -1) {
-        alert('This active sequence is not in the track list yet. Click Add Current Active Sequence first.');
-        return;
-    }
-
-    mergeSequenceTrackUsage(selectedSequenceFilters[existingIndex], incoming);
-    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
-    saveSequenceFilters();
-    renderSequenceFilters();
-}
-
-function resetTrackSelection() {
-    selectedSequenceFilters = [];
+    const result = applySequenceTrackUsagePlan(selectedSequenceFilters, plan, !!resetChoices);
+    selectedSequenceFilters = selectedSequenceFilters.map((filter) => sanitizeSequenceFilter(filter, false));
     trackRangeAnchor = null;
-    try {
-        localStorage.removeItem(SEQUENCE_FILTERS_STORAGE_KEY);
-    } catch (error) {}
-    loadSequenceFilters();
+    saveSequenceFilters();
+    renderSequenceFilters();
+    return result;
+}
+
+function resetTrackSelection(sequenceKey) {
+    const resetCount = clearTrackChoices(selectedSequenceFilters, sequenceKey);
+    if (!resetCount) {
+        return;
+    }
+
+    if (trackRangeAnchor && (!sequenceKey || trackRangeAnchor.sequenceKey === sequenceKey)) {
+        trackRangeAnchor = null;
+    }
+    saveAndRenderTrackFilters();
 }
 
 function removeSequenceFilter(sequenceKey) {
-    selectedSequenceFilters = selectedSequenceFilters.filter((filter, index) => index === 0 || (filter.sequenceID || filter.sequenceName) !== sequenceKey);
-    selectedSequenceFilters = selectedSequenceFilters.map((filter, index) => sanitizeSequenceFilter(filter, index === 0));
+    selectedSequenceFilters = selectedSequenceFilters.filter((filter) => (filter.sequenceID || filter.sequenceName) !== sequenceKey);
+    selectedSequenceFilters = selectedSequenceFilters.map((filter) => sanitizeSequenceFilter(filter, false));
+    if (trackRangeAnchor && trackRangeAnchor.sequenceKey === sequenceKey) {
+        trackRangeAnchor = null;
+    }
     saveSequenceFilters();
     renderSequenceFilters();
 }
@@ -1761,7 +2287,7 @@ function renderProjectFolderFilters() {
         empty.textContent = 'No Premiere project folders found.';
         container.appendChild(empty);
         if (hint) {
-            hint.textContent = 'Only root bins are shown here. Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.';
+            hint.textContent = 'Only root folders are shown.';
         }
         return;
     }
@@ -1774,9 +2300,10 @@ function renderProjectFolderFilters() {
         const isAnchor = folderRangeAnchor === entry.folderPath;
         const displayName = entry.folderPath.split('/').pop();
 
-        item.className = 'choice-item';
+        item.className = 'choice-item folder-choice-item';
         button.type = 'button';
         button.className = `choice-button folder-button${included ? ' is-included' : ''}${ignored ? ' is-ignored' : ''}${isAnchor ? ' is-range-anchor' : ''}`;
+        button.title = `${displayName}: ${entry.count} ${entry.count === 1 ? 'file' : 'files'}`;
         button.onclick = (event) => {
             if (event.detail === 1) {
                 handleProjectFolderClick(entry.folderPath);
@@ -1784,16 +2311,22 @@ function renderProjectFolderFilters() {
         };
         button.ondblclick = () => handleProjectFolderDoubleClick(entry.folderPath);
 
+        const icon = document.createElement('span');
+        icon.className = 'folder-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        button.appendChild(icon);
+
         const title = document.createElement('span');
         title.className = 'choice-title';
         title.textContent = displayName;
         button.appendChild(title);
 
-        const meta = document.createElement('span');
-        meta.className = 'choice-meta';
-        meta.textContent = `${entry.count} ${entry.count === 1 ? 'file' : 'files'}`;
+        const count = document.createElement('span');
+        count.className = 'folder-count';
+        count.textContent = String(entry.count);
+        button.appendChild(count);
+
         item.appendChild(button);
-        item.appendChild(meta);
 
         container.appendChild(item);
     });
@@ -1802,9 +2335,9 @@ function renderProjectFolderFilters() {
         const includedCount = includedProjectFolders.length;
         const skippedCount = ignoredProjectFolders.length;
         if (includedCount || skippedCount) {
-            hint.textContent = `${includedCount} force-copy folder${includedCount === 1 ? '' : 's'}, ${skippedCount} ignored folder${skippedCount === 1 ? '' : 's'}. Ignored bins win first; green bins only force-copy inside the reduced sequence and track selection.`;
+            hint.textContent = `${includedCount} included · ${skippedCount} ignored`;
         } else {
-            hint.textContent = 'Neutral root bins add no rule. Root-level media that is not inside a Premiere folder will be copied into one CollectedMedias folder.';
+            hint.textContent = 'Gray folders have no special rule.';
         }
     }
 }
@@ -1982,8 +2515,17 @@ async function refreshProject() {
         setText('selectionSummary', 'Refreshing project files from Premiere...');
         const refreshed = await loadProjectPlan();
         if (refreshed) {
-            setText('summaryText', 'Project refreshed. Tracks, Premiere folders, and source files are up to date.');
+            const trackResult = await refreshAllSelectedSequenceTracks(true);
+            const missingCount = trackResult.missingSequences.length;
+            setText(
+                'summaryText',
+                missingCount
+                    ? `Project refreshed. Reset and updated ${trackResult.refreshedCount} selected sequence${trackResult.refreshedCount === 1 ? '' : 's'}; ${missingCount} sequence${missingCount === 1 ? ' was' : 's were'} not found.`
+                    : `Project refreshed. Reset and updated all ${trackResult.refreshedCount} selected sequence${trackResult.refreshedCount === 1 ? '' : 's'}, Premiere folders, and source files.`
+            );
         }
+    } catch (error) {
+        setText('summaryText', error && error.message ? error.message : String(error));
     } finally {
         if (refreshButton) {
             refreshButton.disabled = false;
@@ -1993,15 +2535,44 @@ async function refreshProject() {
 
 async function copyFileWithRobocopy(source, destinationPath) {
     return new Promise((resolve) => {
+        let stagingDir = '';
+        let stagedPath = '';
+        let settled = false;
+        const finish = (result) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+
+            try {
+                if (stagedPath && fs.existsSync(stagedPath)) {
+                    fs.unlinkSync(stagedPath);
+                }
+            } catch (cleanupFileError) {}
+            try {
+                if (stagingDir && fs.existsSync(stagingDir)) {
+                    fs.rmdirSync(stagingDir);
+                }
+            } catch (cleanupDirectoryError) {}
+
+            resolve(result);
+        };
+
         try {
             const sourceDir = path.dirname(source);
             const fileName = path.basename(source);
             const destinationDir = path.dirname(destinationPath);
             ensureDirectorySync(destinationDir);
+            stagingDir = path.join(
+                destinationDir,
+                `.projectcollector-copy-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+            );
+            ensureDirectorySync(stagingDir);
+            stagedPath = path.join(stagingDir, fileName);
 
             const args = [
                 sourceDir,
-                destinationDir,
+                stagingDir,
                 fileName,
                 '/R:1',
                 '/W:1',
@@ -2022,22 +2593,45 @@ async function copyFileWithRobocopy(source, destinationPath) {
             });
 
             child.on('error', (error) => {
-                resolve({ success: false, message: error.message });
+                finish({ success: false, message: error.message });
             });
 
             child.on('close', (code) => {
                 if (code !== null && code < 8) {
-                    resolve({ success: true, message: '' });
+                    try {
+                        if (!fs.existsSync(stagedPath)) {
+                            throw new Error(`robocopy reported success but did not create ${stagedPath}`);
+                        }
+
+                        const sourceSize = fs.statSync(source).size;
+                        const stagedSize = fs.statSync(stagedPath).size;
+                        if (sourceSize !== stagedSize) {
+                            throw new Error(`Copied file size mismatch: source ${sourceSize} bytes, copied ${stagedSize} bytes`);
+                        }
+
+                        if (fs.existsSync(destinationPath)) {
+                            fs.unlinkSync(destinationPath);
+                        }
+                        fs.renameSync(stagedPath, destinationPath);
+
+                        if (!fs.existsSync(destinationPath) || fs.statSync(destinationPath).size !== sourceSize) {
+                            throw new Error(`Final copied file could not be verified at ${destinationPath}`);
+                        }
+
+                        finish({ success: true, message: '', destinationPath });
+                    } catch (finalizeError) {
+                        finish({ success: false, message: finalizeError.message });
+                    }
                     return;
                 }
 
-                resolve({
+                finish({
                     success: false,
                     message: stderr || `robocopy failed with exit code ${code}`
                 });
             });
         } catch (error) {
-            resolve({ success: false, message: error.message });
+            finish({ success: false, message: error.message });
         }
     });
 }
@@ -2096,6 +2690,196 @@ function showCompletionPrompt(success, message) {
     title.classList.toggle('has-error', !success);
     body.textContent = message;
     prompt.classList.add('is-visible');
+}
+
+function hideTrackConflictPrompt() {
+    const prompt = document.getElementById('trackConflictPrompt');
+    if (prompt) {
+        prompt.classList.remove('is-visible');
+    }
+}
+
+function isTrackConflictDecision(decision) {
+    return decision === 'copy' || decision === 'skip';
+}
+
+function countTrackConflictDecisions(decisions) {
+    return (decisions || []).reduce((count, decision) => (
+        isTrackConflictDecision(decision) ? count + 1 : count
+    ), 0);
+}
+
+function updateTrackConflictPromptState() {
+    if (!trackConflictPromptState) {
+        return;
+    }
+
+    const conflicts = trackConflictPromptState.conflicts;
+    const decisions = trackConflictPromptState.decisions;
+    const rows = trackConflictPromptState.rows;
+    const resolvedCount = countTrackConflictDecisions(decisions);
+    const remainingCount = conflicts.length - resolvedCount;
+    const continueButton = document.getElementById('trackConflictContinueButton');
+    const status = document.getElementById('trackConflictStatus');
+
+    rows.forEach((rowInfo, index) => {
+        const decision = decisions[index] || '';
+        rowInfo.copyButton.classList.toggle('is-selected', decision === 'copy');
+        rowInfo.skipButton.classList.toggle('is-selected', decision === 'skip');
+    });
+
+    if (continueButton) {
+        continueButton.disabled = remainingCount > 0;
+    }
+    if (status) {
+        status.textContent = remainingCount > 0
+            ? `${resolvedCount} of ${conflicts.length} resolved. Choose an action for ${remainingCount} more.`
+            : `All ${conflicts.length} conflict${conflicts.length === 1 ? '' : 's'} resolved. The backup is ready to continue.`;
+    }
+}
+
+function setTrackConflictChoice(conflictIndex, decision) {
+    const index = parseInt(conflictIndex, 10);
+    if (
+        !trackConflictPromptState
+        || !isTrackConflictDecision(decision)
+        || !Number.isInteger(index)
+        || index < 0
+        || index >= trackConflictPromptState.conflicts.length
+    ) {
+        return;
+    }
+
+    trackConflictPromptState.decisions[index] = decision;
+    updateTrackConflictPromptState();
+}
+
+function setAllTrackConflictChoices(decision) {
+    if (!trackConflictPromptState || !isTrackConflictDecision(decision)) {
+        return;
+    }
+
+    trackConflictPromptState.conflicts.forEach((conflict, index) => {
+        setTrackConflictChoice(index, decision);
+    });
+}
+
+function handleTrackConflictListClick(event) {
+    if (!trackConflictPromptState) {
+        return;
+    }
+
+    const list = document.getElementById('trackConflictList');
+    let target = event && event.target;
+
+    while (target && target !== list) {
+        const decision = target.getAttribute && target.getAttribute('data-track-conflict-choice');
+        const conflictIndex = target.getAttribute && target.getAttribute('data-track-conflict-index');
+        if (isTrackConflictDecision(decision) && conflictIndex !== null) {
+            setTrackConflictChoice(conflictIndex, decision);
+            return;
+        }
+        target = target.parentNode;
+    }
+}
+
+function finishTrackConflictPrompt(shouldContinue) {
+    if (!trackConflictPromptResolver || !trackConflictPromptState) {
+        return;
+    }
+
+    const conflicts = trackConflictPromptState.conflicts;
+    const decisions = trackConflictPromptState.decisions;
+    if (shouldContinue && countTrackConflictDecisions(decisions) !== conflicts.length) {
+        return;
+    }
+
+    const resolve = trackConflictPromptResolver;
+    const result = shouldContinue
+        ? conflicts.map((conflict, index) => ({
+            mediaKey: conflict.mediaKey,
+            decision: decisions[index]
+        }))
+        : null;
+    const list = document.getElementById('trackConflictList');
+    if (list) {
+        list.onclick = null;
+    }
+    trackConflictPromptResolver = null;
+    trackConflictPromptState = null;
+    hideTrackConflictPrompt();
+    resolve(result);
+}
+
+function showTrackConflictPrompt(conflicts) {
+    const prompt = document.getElementById('trackConflictPrompt');
+    const list = document.getElementById('trackConflictList');
+
+    if (!prompt || !list || !Array.isArray(conflicts) || !conflicts.length) {
+        return Promise.resolve([]);
+    }
+
+    list.innerHTML = '';
+    trackConflictPromptState = {
+        conflicts,
+        decisions: new Array(conflicts.length),
+        rows: []
+    };
+
+    conflicts.forEach((conflict, index) => {
+        const row = document.createElement('div');
+        row.className = 'track-conflict-row';
+
+        const details = document.createElement('div');
+        details.className = 'track-conflict-details';
+
+        const name = document.createElement('div');
+        name.className = 'track-conflict-name';
+        name.textContent = conflict.name;
+
+        const source = document.createElement('div');
+        source.className = 'track-conflict-path';
+        source.textContent = conflict.source;
+
+        details.appendChild(name);
+        details.appendChild(source);
+
+        const actions = document.createElement('div');
+        actions.className = 'track-conflict-row-actions';
+
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'track-conflict-choice track-conflict-copy';
+        copyButton.setAttribute('data-track-conflict-choice', 'copy');
+        copyButton.setAttribute('data-track-conflict-index', String(index));
+        copyButton.textContent = 'Copy';
+
+        const skipButton = document.createElement('button');
+        skipButton.type = 'button';
+        skipButton.className = 'track-conflict-choice track-conflict-skip';
+        skipButton.setAttribute('data-track-conflict-choice', 'skip');
+        skipButton.setAttribute('data-track-conflict-index', String(index));
+        skipButton.textContent = 'Do not copy';
+
+        actions.appendChild(copyButton);
+        actions.appendChild(skipButton);
+        row.appendChild(details);
+        row.appendChild(actions);
+        list.appendChild(row);
+        trackConflictPromptState.rows.push({
+            row,
+            copyButton,
+            skipButton
+        });
+    });
+
+    list.onclick = handleTrackConflictListClick;
+    prompt.classList.add('is-visible');
+    updateTrackConflictPromptState();
+
+    return new Promise((resolve) => {
+        trackConflictPromptResolver = resolve;
+    });
 }
 
 function resetResults() {
@@ -2171,7 +2955,7 @@ async function chooseCompareFolder() {
         return;
     }
 
-    const result = window.cep.fs.showOpenDialogEx(false, true, 'Select Skip Existing Medias Folder');
+    const result = window.cep.fs.showOpenDialogEx(false, true, 'Select Skip Folder');
 
     if (result.data.length > 0) {
         compareLocation = result.data[0];
@@ -2188,6 +2972,133 @@ function hasIgnoredTracks(filtersPayload) {
     ));
 }
 
+function copyMediaKeySet(mediaSet) {
+    const result = new Set();
+    if (mediaSet && typeof mediaSet.forEach === 'function') {
+        mediaSet.forEach((mediaKey) => {
+            if (mediaKey) {
+                result.add(mediaKey);
+            }
+        });
+    }
+    return result;
+}
+
+function buildTrackRuleContext(tasks, includedMediaSet, ignoredMediaSet) {
+    const conflicts = [];
+    const seenMedia = new Set();
+    const taskMediaSet = new Set();
+    const includedSet = copyMediaKeySet(includedMediaSet);
+    const ignoredSet = copyMediaKeySet(ignoredMediaSet);
+    const conflictMediaSet = new Set();
+    const ignoredOnlyMediaSet = new Set();
+
+    (tasks || []).forEach((task) => {
+        const mediaKey = normalizeMediaKey(task.source);
+        if (!mediaKey) {
+            return;
+        }
+        taskMediaSet.add(mediaKey);
+
+        if (seenMedia.has(mediaKey) || !includedSet.has(mediaKey) || !ignoredSet.has(mediaKey)) {
+            return;
+        }
+
+        seenMedia.add(mediaKey);
+        conflictMediaSet.add(mediaKey);
+        conflicts.push({
+            name: task.name || path.basename(task.source || '') || 'Unnamed media',
+            source: task.source || '',
+            mediaKey
+        });
+    });
+
+    ignoredSet.forEach((mediaKey) => {
+        if (taskMediaSet.has(mediaKey) && !conflictMediaSet.has(mediaKey)) {
+            ignoredOnlyMediaSet.add(mediaKey);
+        }
+    });
+
+    return {
+        includedMediaSet: includedSet,
+        ignoredMediaSet: ignoredSet,
+        conflictMediaSet,
+        ignoredOnlyMediaSet,
+        conflicts
+    };
+}
+
+function buildTrackConflictDecisionInfo(trackRuleContext, resolvedConflicts) {
+    const info = {
+        valid: false,
+        error: '',
+        copyMediaSet: new Set(),
+        skipMediaSet: new Set()
+    };
+    const expectedMediaSet = trackRuleContext && trackRuleContext.conflictMediaSet
+        ? trackRuleContext.conflictMediaSet
+        : new Set();
+    const decidedMediaSet = new Set();
+
+    if (!Array.isArray(resolvedConflicts)) {
+        info.error = 'Track conflict choices were not returned in a valid format.';
+        return info;
+    }
+
+    (resolvedConflicts || []).forEach((conflict) => {
+        if (info.error) {
+            return;
+        }
+
+        if (
+            !conflict
+            || !conflict.mediaKey
+            || !expectedMediaSet.has(conflict.mediaKey)
+            || !isTrackConflictDecision(conflict.decision)
+        ) {
+            info.error = 'A track conflict choice referred to media outside the conflict list.';
+            return;
+        }
+        if (decidedMediaSet.has(conflict.mediaKey)) {
+            info.error = 'A track conflict file received more than one decision.';
+            return;
+        }
+
+        decidedMediaSet.add(conflict.mediaKey);
+        if (conflict.decision === 'copy') {
+            info.copyMediaSet.add(conflict.mediaKey);
+        } else {
+            info.skipMediaSet.add(conflict.mediaKey);
+        }
+    });
+
+    if (!info.error && decidedMediaSet.size !== expectedMediaSet.size) {
+        info.error = 'Every listed track conflict must receive exactly one choice.';
+    }
+
+    info.valid = !info.error;
+    return info;
+}
+
+function getTrackConflictDecision(task, trackRuleContext, conflictDecisionInfo) {
+    if (!trackRuleContext || !conflictDecisionInfo || !conflictDecisionInfo.valid) {
+        return '';
+    }
+
+    const mediaKey = normalizeMediaKey(task.source);
+    if (!trackRuleContext.conflictMediaSet.has(mediaKey)) {
+        return '';
+    }
+    if (conflictDecisionInfo.copyMediaSet.has(mediaKey)) {
+        return 'copy';
+    }
+    if (conflictDecisionInfo.skipMediaSet.has(mediaKey)) {
+        return 'skip';
+    }
+
+    return '';
+}
+
 async function buildIgnoredMediaSetForCopy(filtersPayload) {
     const ignoredPaths = buildIgnoredMediaPathsFromSelection();
     const addIgnoredPaths = (mediaPaths) => {
@@ -2199,19 +3110,13 @@ async function buildIgnoredMediaSetForCopy(filtersPayload) {
     };
     const buildIgnoredInfo = (warning) => {
         const ignoredMediaSet = new Set();
-        const ignoredSignatureSet = new Set();
 
         ignoredPaths.forEach((mediaPath) => {
             ignoredMediaSet.add(normalizeMediaKey(mediaPath));
-            const signatureKey = buildMediaSignatureKey(mediaPath);
-            if (signatureKey) {
-                ignoredSignatureSet.add(signatureKey);
-            }
         });
 
         return {
             ignoredMediaSet,
-            ignoredSignatureSet,
             warning: warning || ''
         };
     };
@@ -2240,44 +3145,126 @@ async function buildIgnoredMediaSetForCopy(filtersPayload) {
     return buildIgnoredInfo(missingWarning);
 }
 
-function buildLinkProjectTasks(copiedTasks) {
-    return copiedTasks.map((task) => ({
-        source: task.source,
-        destination: task.destinationPath
-    }));
+function buildLinkProjectTasks(allTasks, copiedTasks, compareMatches) {
+    const copiedDestinationBySource = new Map();
+    const skipDestinationBySource = new Map();
+    const relinkTasksBySource = new Map();
+
+    (copiedTasks || []).forEach((task) => {
+        if (!task || !task.source || !task.destinationPath) {
+            return;
+        }
+
+        copiedDestinationBySource.set(normalizeMediaKey(task.source), {
+            source: task.source,
+            destination: task.destinationPath
+        });
+    });
+
+    (compareMatches || []).forEach((entry) => {
+        const task = entry && entry.task;
+        const match = entry && entry.match;
+        if (!task || !task.source || !match || !match.path) {
+            return;
+        }
+
+        skipDestinationBySource.set(normalizeMediaKey(task.source), {
+            source: task.source,
+            destination: match.path
+        });
+    });
+
+    (allTasks || []).forEach((task) => {
+        if (!task || !task.source) {
+            return;
+        }
+
+        const sourceKey = normalizeMediaKey(task.source);
+        const copiedTask = copiedDestinationBySource.get(sourceKey);
+        const skipTask = skipDestinationBySource.get(sourceKey);
+        const collectedDestination = copiedTask ? copiedTask.destination : '';
+        const skipDestination = skipTask ? skipTask.destination : '';
+        const relinkTask = {
+            source: task.source,
+            destination: collectedDestination || skipDestination || task.source,
+            targetKind: collectedDestination ? 'collected' : (skipDestination ? 'skip-location' : 'original')
+        };
+        const existingTask = relinkTasksBySource.get(sourceKey);
+
+        if (!existingTask || (
+            existingTask.targetKind !== 'collected'
+            && (relinkTask.targetKind === 'collected' || relinkTask.targetKind === 'skip-location')
+        )) {
+            relinkTasksBySource.set(sourceKey, relinkTask);
+        }
+    });
+
+    copiedDestinationBySource.forEach((copiedTask, sourceKey) => {
+        if (!relinkTasksBySource.has(sourceKey)) {
+            relinkTasksBySource.set(sourceKey, {
+                source: copiedTask.source,
+                destination: copiedTask.destination,
+                targetKind: 'collected'
+            });
+        }
+    });
+
+    return Array.from(relinkTasksBySource.values());
 }
 
-function isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet) {
-    const mediaKey = normalizeMediaKey(task.source);
-
-    if (ignoredMediaSet.has(mediaKey)) {
-        return true;
-    }
-
-    const signatureKey = buildMediaSignatureKey(task.source);
-    return !!signatureKey && ignoredSignatureSet.has(signatureKey);
+function createCopyRuleContext(options) {
+    const source = options || {};
+    return {
+        treeSelectedTaskSet: source.treeSelectedTaskSet || new Set(),
+        sequenceScopedMediaSet: source.sequenceScopedMediaSet || null,
+        trackRuleContext: source.trackRuleContext || buildTrackRuleContext([], new Set(), new Set()),
+        conflictDecisionInfo: source.conflictDecisionInfo || null,
+        includedProjectFolders: Array.isArray(source.includedProjectFolders)
+            ? source.includedProjectFolders.slice()
+            : includedProjectFolders.slice(),
+        ignoredProjectFolders: Array.isArray(source.ignoredProjectFolders)
+            ? source.ignoredProjectFolders.slice()
+            : ignoredProjectFolders.slice()
+    };
 }
 
-function getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet) {
+function getCopySkipReason(task, ruleContext) {
+    const rules = ruleContext || createCopyRuleContext();
     const mediaKey = normalizeMediaKey(task.source);
 
-    if (isTaskInsideIgnoredProjectFolder(task)) {
+    if (isTaskInsideProjectFolderList(task, rules.ignoredProjectFolders)) {
         return `skipped because Premiere folder "${task.binPath}" is ignored`;
     }
 
-    if (sequenceScopedMediaSet && !sequenceScopedMediaSet.has(mediaKey)) {
+    if (rules.sequenceScopedMediaSet && !rules.sequenceScopedMediaSet.has(mediaKey)) {
         return 'skipped because it is not used by the chosen sequences';
     }
 
-    if (isIgnoredByTrackSelection(task, ignoredMediaSet, ignoredSignatureSet)) {
-        return 'skipped by ignored track selection';
+    const trackConflictDecision = getTrackConflictDecision(
+        task,
+        rules.trackRuleContext,
+        rules.conflictDecisionInfo
+    );
+    if (trackConflictDecision === 'skip') {
+        return 'skipped by your track conflict decision';
     }
-
-    if (isTaskInsideIncludedProjectFolder(task)) {
+    if (trackConflictDecision === 'copy') {
         return '';
     }
 
-    if (!treeSelectedTaskSet.has(task)) {
+    if (rules.trackRuleContext.conflictMediaSet.has(mediaKey)) {
+        return 'skipped because its track conflict was not resolved';
+    }
+
+    if (rules.trackRuleContext.ignoredOnlyMediaSet.has(mediaKey)) {
+        return 'skipped by ignored track selection';
+    }
+
+    if (isTaskInsideProjectFolderList(task, rules.includedProjectFolders)) {
+        return '';
+    }
+
+    if (!rules.treeSelectedTaskSet.has(task)) {
         return 'skipped by Source File List selection';
     }
 
@@ -2304,45 +3291,56 @@ async function buildCopyReadyContext() {
     const filtersPayload = buildSequenceFiltersPayload().filter((filter) => filter.sequenceID || filter.sequenceName);
     const ignoredMediaInfo = await buildIgnoredMediaSetForCopy(filtersPayload);
     const ignoredMediaSet = ignoredMediaInfo.ignoredMediaSet;
-    const ignoredSignatureSet = ignoredMediaInfo.ignoredSignatureSet;
     const copyWarnings = ignoredMediaInfo.warning ? [ignoredMediaInfo.warning] : [];
     let sequenceScopedMediaSet = null;
     let sequenceScopeInfo = null;
+    let scopedPlan = null;
+    const ignoredTracksSelected = hasIgnoredTracks(filtersPayload);
 
     if (sequenceOnlyMode && !filtersPayload.length) {
         alert('Add at least one sequence before using selected-sequence collection mode.');
         return { ok: false };
     }
 
-    if (sequenceOnlyMode) {
+    if (sequenceOnlyMode || ignoredTracksSelected) {
+        if (!filtersPayload.length) {
+            setText('summaryText', 'Could not inspect track selections because no sequence is selected.');
+            return { ok: false };
+        }
+
         const scopedRaw = await callHost(`getSequenceScopedMediaPlan("${escapeForEvalScript(JSON.stringify(filtersPayload))}")`);
-        const scopedPlan = safeJsonParse(scopedRaw);
+        scopedPlan = safeJsonParse(scopedRaw);
         if (!scopedPlan || scopedPlan.error) {
             setText('summaryText', scopedPlan && scopedPlan.error ? scopedPlan.error : `Could not build the selected-sequence media plan. Raw response: ${scopedRaw}`);
             return { ok: false };
         }
 
-        sequenceScopedMediaSet = new Set((scopedPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
-        sequenceScopeInfo = scopedPlan;
+        if (sequenceOnlyMode) {
+            sequenceScopedMediaSet = new Set((scopedPlan.mediaPaths || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
+            sequenceScopeInfo = scopedPlan;
+        }
     }
 
-    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter((task) => !getCopySkipReason(
-        task,
+    const includedMediaSet = new Set(((scopedPlan && scopedPlan.mediaPaths) || []).map((mediaPath) => normalizeMediaKey(mediaPath)));
+    const trackRuleContext = buildTrackRuleContext(
+        latestPlan.tasks || [],
+        includedMediaSet,
+        ignoredMediaSet
+    );
+    const copyRuleContext = createCopyRuleContext({
         treeSelectedTaskSet,
         sequenceScopedMediaSet,
-        ignoredMediaSet,
-        ignoredSignatureSet
-    ));
+        trackRuleContext,
+        includedProjectFolders,
+        ignoredProjectFolders
+    });
 
     return {
         ok: true,
-        treeSelectedTaskSet,
-        ignoredMediaSet,
-        ignoredSignatureSet,
+        copyRuleContext,
         copyWarnings,
-        sequenceScopedMediaSet,
         sequenceScopeInfo,
-        selectedTasksBeforeCompare
+        trackConflicts: trackRuleContext.conflicts
     };
 }
 
@@ -2351,6 +3349,9 @@ async function collect() {
         await runCollection();
     } catch (error) {
         const message = error && error.message ? error.message : String(error || 'Unknown backup error');
+        trackConflictPromptResolver = null;
+        trackConflictPromptState = null;
+        hideTrackConflictPrompt();
         setText('currentFile', 'Backup stopped by an unexpected error');
         setText('summaryText', `Backup could not continue. ${message}`);
         renderList(
@@ -2385,13 +3386,36 @@ async function runCollection() {
         return;
     }
 
-    const treeSelectedTaskSet = context.treeSelectedTaskSet;
-    const ignoredMediaSet = context.ignoredMediaSet;
-    const ignoredSignatureSet = context.ignoredSignatureSet;
+    let copyRuleContext = context.copyRuleContext;
     const copyWarnings = context.copyWarnings;
-    const sequenceScopedMediaSet = context.sequenceScopedMediaSet;
     const sequenceScopeInfo = context.sequenceScopeInfo;
-    const selectedTasksBeforeCompare = context.selectedTasksBeforeCompare;
+    const trackConflicts = context.trackConflicts;
+
+    if (trackConflicts.length) {
+        setText('currentFile', 'Waiting for track conflict decisions');
+        setText('summaryText', `${trackConflicts.length} media conflict${trackConflicts.length === 1 ? '' : 's'} found between included and ignored tracks.`);
+        const resolvedConflicts = await showTrackConflictPrompt(trackConflicts);
+        if (!resolvedConflicts) {
+            setBusyState(false);
+            setText('currentFile', 'Backup cancelled');
+            setText('summaryText', 'Backup cancelled before any files were copied.');
+            return;
+        }
+        const conflictDecisionInfo = buildTrackConflictDecisionInfo(
+            copyRuleContext.trackRuleContext,
+            resolvedConflicts
+        );
+        if (!conflictDecisionInfo.valid) {
+            throw new Error(conflictDecisionInfo.error || 'Track conflict choices could not be validated.');
+        }
+        copyRuleContext = createCopyRuleContext(Object.assign({}, copyRuleContext, {
+            conflictDecisionInfo
+        }));
+    }
+
+    const selectedTasksBeforeCompare = (latestPlan.tasks || []).filter(
+        (task) => !getCopySkipReason(task, copyRuleContext)
+    );
 
     let compareInfo = {
         files: [],
@@ -2416,19 +3440,23 @@ async function runCollection() {
         }
     }
 
-    const selectedTasks = selectedTasksBeforeCompare.filter((task) => {
-        const match = compareLocation ? findCompareMatchForTask(task, compareInfo.lookup) : null;
+    const selectedTasks = [];
+    for (let compareIndex = 0; compareIndex < selectedTasksBeforeCompare.length; compareIndex += 1) {
+        const task = selectedTasksBeforeCompare[compareIndex];
+        if (compareLocation) {
+            setText('currentFile', `Verifying skip location ${compareIndex + 1} / ${selectedTasksBeforeCompare.length}: ${task.name}`);
+        }
+        const match = compareLocation ? await findCompareMatchForTask(task, compareInfo.lookup) : null;
 
         if (match) {
             compareMatches.push({
                 task,
                 match
             });
-            return false;
+        } else {
+            selectedTasks.push(task);
         }
-
-        return true;
-    });
+    }
 
     if (compareLocation) {
         copyWarnings.push(`${compareInfo.files.length} compare file${compareInfo.files.length === 1 ? '' : 's'} checked. ${compareMatches.length} already exist and were skipped.`);
@@ -2459,7 +3487,7 @@ async function runCollection() {
     const skippedItems = [];
 
     (latestPlan.tasks || []).forEach((task) => {
-        const skipReason = getCopySkipReason(task, treeSelectedTaskSet, sequenceScopedMediaSet, ignoredMediaSet, ignoredSignatureSet);
+        const skipReason = getCopySkipReason(task, copyRuleContext);
 
         if (skipReason) {
             skippedItems.push(`${task.source} -> ${skipReason}`);
@@ -2510,10 +3538,6 @@ async function runCollection() {
     let copiedProjectMessage = '';
     let linkedProjectMessage = '';
     let copiedProjectPath = '';
-    const compareAvailableMediaTasks = compareMatches.map((item) => Object.assign({}, item.task, {
-        destinationPath: item.match.path
-    }));
-
     if (copyProjectFile) {
         setText('currentFile', 'Saving and copying Premiere project file');
         const projectSaveRaw = await callHost('saveCurrentProjectAndGetPath()');
@@ -2544,29 +3568,35 @@ async function runCollection() {
         if (linkProjectAfterCollection) {
             if (copiedProjectPath) {
                 setText('currentFile', 'Linking copied project to collected media');
+                const projectRelinkTasks = buildLinkProjectTasks(latestPlan.tasks || [], copiedMediaTasks, compareMatches);
                 const linkRaw = await callHost(
-                    `linkProjectCopyToCollectedMedia("${escapeForEvalScript(copiedProjectPath)}","${escapeForEvalScript(JSON.stringify(buildLinkProjectTasks(copiedMediaTasks.concat(compareAvailableMediaTasks))))}")`
+                    `linkProjectCopyToCollectedMedia("${escapeForEvalScript(copiedProjectPath)}","${escapeForEvalScript(JSON.stringify(projectRelinkTasks))}")`
                 );
                 const linkResult = safeJsonParse(linkRaw);
 
-                if (linkResult && !linkResult.error) {
-                    linkedProjectMessage = ` Project linked to ${linkResult.linkedCount || 0} collected media files.`;
+                if (linkResult && linkResult.success === true && !linkResult.error) {
+                    linkedProjectMessage = ` BACKUP project offlined ${linkResult.offlineCount || 0} files, linked ${linkResult.linkedCollectedCount || 0} to collected media, ${linkResult.linkedSkipLocationCount || 0} to verified skip-location files, restored ${linkResult.linkedOriginalCount || 0} to original paths, and remains open.`;
                     if (Array.isArray(linkResult.failed) && linkResult.failed.length) {
                         linkResult.failed.forEach((message) => {
                             failures.push({
-                                source: copiedProjectPath,
+                                source: 'BACKUP project relink',
                                 destination: copiedProjectPath,
                                 message
                             });
                         });
-                        linkedProjectMessage = ` Project linked to ${linkResult.linkedCount || 0} collected media files with ${linkResult.failed.length} relink errors.`;
+                        linkedProjectMessage = ` BACKUP project relink reported ${linkResult.failed.length} error${linkResult.failed.length === 1 ? '' : 's'}.`;
                     }
                 } else {
-                    linkedProjectMessage = ` Project link failed.${linkResult && linkResult.error ? ` ${linkResult.error}` : ''}`;
+                    const linkFailureMessage = linkResult && linkResult.error
+                        ? linkResult.error
+                        : (linkResult && Array.isArray(linkResult.failed) && linkResult.failed.length
+                            ? linkResult.failed.join('; ')
+                            : `Could not link copied project. Raw response: ${linkRaw}`);
+                    linkedProjectMessage = ` BACKUP project relink failed and was not saved. ${linkFailureMessage}`;
                     failures.push({
-                        source: copiedProjectPath,
+                        source: 'BACKUP project relink',
                         destination: copiedProjectPath,
-                        message: linkResult && linkResult.error ? linkResult.error : `Could not link copied project. Raw response: ${linkRaw}`
+                        message: linkFailureMessage
                     });
                 }
             } else {
@@ -2626,14 +3656,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             setText('path', destination);
             setText('summaryText', 'Saved destination loaded. Click BACKUP PROJECT to begin.');
         }
-        localStorage.removeItem('projectcollector.compareLocation');
     } catch (error) {}
 
     document.getElementById('sourceListBox').style.display = 'none';
     setText('showListButton', 'Show List');
     setSourceSectionVisibility(false);
     try {
-        sequenceOnlyMode = true;
+        const savedSequenceOnlyMode = localStorage.getItem(SEQUENCE_ONLY_MODE_STORAGE_KEY);
+        sequenceOnlyMode = savedSequenceOnlyMode === null ? true : savedSequenceOnlyMode === '1';
         createReducedProject = localStorage.getItem(CREATE_REDUCED_PROJECT_STORAGE_KEY) === '1';
     } catch (error) {
         sequenceOnlyMode = true;

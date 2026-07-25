@@ -1,5 +1,5 @@
 {
-  "version": "3.0.10",
+  "version": "4.0.0",
   "channel": "main",
-  "notes": "Release 3.0.10 removes the track-conflict comparison dialog and automatically skips media used on ignored tracks, restoring the simpler backup behavior."
+  "notes": "Release 4.0.0 delivers robust per-sequence track selection and presets, deterministic track-conflict handling, verified skip-location matching, BACKUP project relinking, persistent project settings with manual cleanup, and the refined compact interface."
 }

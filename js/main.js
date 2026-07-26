@@ -2733,6 +2733,8 @@ function hideCompletionPrompt() {
     const prompt = document.getElementById('completionPrompt');
     if (prompt) {
         prompt.classList.remove('is-visible');
+        prompt.classList.remove('is-success');
+        prompt.classList.remove('is-error');
     }
 }
 
@@ -2745,9 +2747,11 @@ function showCompletionPrompt(success, message) {
         return;
     }
 
-    title.textContent = success ? 'Done without error' : 'Done with errors';
+    title.textContent = success ? 'Done without error' : 'Finished with errors';
     title.classList.toggle('has-error', !success);
     body.textContent = message;
+    prompt.classList.toggle('is-success', success);
+    prompt.classList.toggle('is-error', !success);
     prompt.classList.add('is-visible');
 }
 
@@ -3696,11 +3700,17 @@ async function runCollection() {
 
     renderList('errorList', failures, (item) => `${item.source} -> ${item.destination} | ${item.message}`, 'No error. All files copied successfully.');
     renderList('missingList', skippedAndWarnings, (item) => item, 'No skipped items.');
+    const completionErrorCount = failures.length + missingMedia.length;
+    const completionSucceeded = completionErrorCount === 0;
+    const completionAction = linkProjectAfterCollection
+        ? 'Backup and linking'
+        : 'Backup';
+
     showCompletionPrompt(
-        failures.length === 0,
-        failures.length === 0
-            ? `All selected files copied successfully.${copiedProjectMessage}${linkedProjectMessage}${reducedProjectMessage}`
-            : `Copy finished with ${failures.length} error${failures.length === 1 ? '' : 's'}. Check Files Not Copied for details.`
+        completionSucceeded,
+        completionSucceeded
+            ? `${completionAction} finished without errors.${copiedProjectMessage}${linkedProjectMessage}${reducedProjectMessage}`
+            : `${completionAction} finished with ${completionErrorCount} error${completionErrorCount === 1 ? '' : 's'}. Check Files Not Copied and Skipped Items for details.${linkedProjectMessage}`
     );
     setBusyState(false);
 }

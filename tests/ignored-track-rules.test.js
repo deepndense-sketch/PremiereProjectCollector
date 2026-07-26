@@ -14,6 +14,9 @@ function createTestElement() {
             add(name) {
                 classes.add(name);
             },
+            contains(name) {
+                return classes.has(name);
+            },
             remove(name) {
                 classes.delete(name);
             },
@@ -162,6 +165,32 @@ test('panel uses the compact destination labels and places sequence options with
     assert.ok(html.indexOf('id="sequenceOnlyMode"') < html.indexOf('id="copyProjectFile"'));
     assert.ok(html.indexOf('id="createReducedProject"') < html.indexOf('id="copyProjectFile"'));
     assert.ok(html.indexOf('id="linkProjectAfterCollection"') < html.indexOf('id="collectButton"'));
+});
+
+test('completion dialog clearly switches between green success and red error states', () => {
+    const testDocument = createTestDocument();
+    const context = loadCollectorLogic(testDocument);
+    const prompt = testDocument.getElementById('completionPrompt');
+    const title = testDocument.getElementById('completionTitle');
+    const message = testDocument.getElementById('completionMessage');
+
+    vm.runInContext(`showCompletionPrompt(true, 'Backup and linking finished without errors.')`, context);
+    assert.equal(prompt.classList.contains('is-visible'), true);
+    assert.equal(prompt.classList.contains('is-success'), true);
+    assert.equal(prompt.classList.contains('is-error'), false);
+    assert.equal(title.textContent, 'Done without error');
+    assert.equal(message.textContent, 'Backup and linking finished without errors.');
+
+    vm.runInContext(`showCompletionPrompt(false, 'Backup and linking finished with 2 errors.')`, context);
+    assert.equal(prompt.classList.contains('is-success'), false);
+    assert.equal(prompt.classList.contains('is-error'), true);
+    assert.equal(title.textContent, 'Finished with errors');
+    assert.equal(message.textContent, 'Backup and linking finished with 2 errors.');
+
+    vm.runInContext('hideCompletionPrompt()', context);
+    assert.equal(prompt.classList.contains('is-visible'), false);
+    assert.equal(prompt.classList.contains('is-success'), false);
+    assert.equal(prompt.classList.contains('is-error'), false);
 });
 
 test('destination folders are created automatically without newer recursive-mkdir options', () => {

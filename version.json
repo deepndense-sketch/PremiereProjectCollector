@@ -1,5 +1,5 @@
 {
-  "version": "4.0.2",
+  "version": "4.0.3",
   "channel": "main",
-  "notes": "Release 4.0.2 creates nested backup folders automatically on mapped and UNC network destinations without relying on newer recursive-mkdir support, improving compatibility across Premiere CEP versions."
+  "notes": "Release 4.0.3 adds a clear green success dialog after backup and relinking, a red error dialog for copy, relink, or genuine missing-media failures, and more explicit completion messages."
 }

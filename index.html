@@ -767,6 +767,18 @@ button:disabled {
     box-shadow: 0 24px 70px var(--shadow);
 }
 
+.done-prompt.is-success .done-dialog {
+    background: linear-gradient(180deg, #153d2a 0%, #10291f 100%);
+    border: 2px solid #43d17b;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48), 0 0 32px rgba(67, 209, 123, 0.2);
+}
+
+.done-prompt.is-error .done-dialog {
+    background: linear-gradient(180deg, #4a2026 0%, #2d171b 100%);
+    border: 2px solid #ff6f7d;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), 0 0 32px rgba(255, 111, 125, 0.18);
+}
+
 .done-title {
     margin: 0 0 10px;
     color: var(--success);
@@ -782,6 +794,24 @@ button:disabled {
     color: var(--muted);
     line-height: 1.5;
     margin-bottom: 18px;
+}
+
+.done-prompt.is-success .done-message {
+    color: #ddf8e8;
+}
+
+.done-prompt.is-error .done-message {
+    color: #ffe1e4;
+}
+
+.done-prompt.is-success .completion-close-button {
+    background: linear-gradient(180deg, #52df8c, #31b96c);
+    color: #07180f;
+}
+
+.done-prompt.is-error .completion-close-button {
+    background: linear-gradient(180deg, #ff7f8a, #df5362);
+    color: #26080c;
 }
 
 .track-conflict-dialog {
@@ -1152,11 +1182,11 @@ button:disabled {
 
     </section>
 </div>
-<div class="done-prompt" id="completionPrompt">
+<div class="done-prompt" id="completionPrompt" role="dialog" aria-modal="true" aria-labelledby="completionTitle" aria-describedby="completionMessage">
     <div class="done-dialog">
         <h2 class="done-title" id="completionTitle">Done without error</h2>
         <div class="done-message" id="completionMessage">All files copied successfully.</div>
-        <button class="button-primary" onclick="hideCompletionPrompt()">Close</button>
+        <button class="button-primary completion-close-button" onclick="hideCompletionPrompt()">Close</button>
     </div>
 </div>
 <div class="done-prompt" id="trackConflictPrompt" role="dialog" aria-modal="true" aria-labelledby="trackConflictTitle">

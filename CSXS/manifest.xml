@@ -1,11 +1,11 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest Version="7.0"
  ExtensionBundleId="com.project.collector"
- ExtensionBundleVersion="1.5.4"
+ ExtensionBundleVersion="4.0.1"
  ExtensionBundleName="Project Collector">
 
   <ExtensionList>
-    <Extension Id="com.project.collector.panel" Version="1.5.4"/>
+    <Extension Id="com.project.collector.panel" Version="4.0.1"/>
   </ExtensionList>
 
   <ExecutionEnvironment>

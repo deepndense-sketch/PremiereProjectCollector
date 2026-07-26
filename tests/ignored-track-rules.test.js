@@ -1801,6 +1801,106 @@ function createHostMediaItem(name, mediaPath, events, options) {
     };
 }
 
+test('Premiere host plan ignores pathless project structures but reports genuine offline media', () => {
+    const context = loadHostRelinkLogic();
+    let sequenceMediaPathRead = false;
+    const sequenceItem = {
+        name: 'Baby wakes mom up in the sweetest way possible@Daily Mail - nest',
+        type: 1,
+        isSequence() {
+            return true;
+        },
+        getMediaPath() {
+            sequenceMediaPathRead = true;
+            return '';
+        }
+    };
+    const generatedItem = {
+        name: 'Adjustment Layer',
+        type: 1,
+        isSequence() {
+            return false;
+        },
+        isOffline() {
+            return false;
+        },
+        getMediaPath() {
+            return '';
+        }
+    };
+    const offlineItem = {
+        name: 'Offline Interview',
+        type: 1,
+        isSequence() {
+            return false;
+        },
+        isOffline() {
+            return true;
+        },
+        getMediaPath() {
+            return '';
+        }
+    };
+    const unreadableItem = {
+        name: 'Unreadable Host Item',
+        type: 1,
+        isSequence() {
+            return false;
+        },
+        isOffline() {
+            return false;
+        },
+        getMediaPath() {
+            throw new Error('Host media-path read failed');
+        }
+    };
+    const networkItem = {
+        name: 'Network Clip',
+        type: 1,
+        isSequence() {
+            return false;
+        },
+        isOffline() {
+            return false;
+        },
+        getMediaPath() {
+            return '\\\\media-server\\news\\network-clip.mov';
+        }
+    };
+
+    context.app = {
+        project: {
+            name: 'Portable News Project.prproj',
+            path: 'C:/Projects/Portable News Project.prproj',
+            rootItem: {
+                type: 2,
+                children: createHostChildren([
+                    sequenceItem,
+                    generatedItem,
+                    offlineItem,
+                    unreadableItem,
+                    networkItem
+                ])
+            }
+        }
+    };
+
+    const plan = JSON.parse(context.getProjectCopyPlan('\\\\backup-server\\projects'));
+
+    assert.equal(sequenceMediaPathRead, false);
+    assert.equal(plan.tasks.length, 1);
+    assert.equal(plan.tasks[0].source, '\\\\media-server\\news\\network-clip.mov');
+    assert.equal(plan.missingMedia.length, 2);
+    assert.equal(
+        plan.missingMedia[0],
+        'Offline Interview | Media is offline and no media path is available'
+    );
+    assert.match(
+        plan.missingMedia[1],
+        /^Unreadable Host Item \| Could not read media path: Error: Host media-path read failed$/
+    );
+});
+
 test('Premiere host relink takes every file offline before linking copied and ignored media', () => {
     const context = loadHostRelinkLogic();
     const events = [];

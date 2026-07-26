@@ -1,5 +1,5 @@
 {
-  "version": "4.0.0",
+  "version": "4.0.1",
   "channel": "main",
-  "notes": "Release 4.0.0 delivers robust per-sequence track selection and presets, deterministic track-conflict handling, verified skip-location matching, BACKUP project relinking, persistent project settings with manual cleanup, and the refined compact interface."
+  "notes": "Release 4.0.1 stops reporting sequences, nested sequences, and other legitimate pathless Premiere-generated items as missing media while preserving genuine offline-media warnings and network-path collection."
 }

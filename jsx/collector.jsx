@@ -60,6 +60,22 @@ function pcIsBin(item) {
     return false;
 }
 
+function pcIsSequenceItem(item) {
+    try {
+        return !!(item && item.isSequence && item.isSequence());
+    } catch (e) {}
+
+    return false;
+}
+
+function pcIsOfflineItem(item) {
+    try {
+        return !!(item && item.isOffline && item.isOffline());
+    } catch (e) {}
+
+    return false;
+}
+
 function pcProjectName() {
     var projectName = '';
 
@@ -105,15 +121,25 @@ function pcCollect(item, currentRelativePath, folders, folderMap, tasks, taskMap
             continue;
         }
 
+        if (pcIsSequenceItem(child)) {
+            continue;
+        }
+
         var mediaPath = '';
+        var mediaPathError = '';
         try {
             mediaPath = child.getMediaPath();
         } catch (e3) {
             mediaPath = '';
+            mediaPathError = e3.toString();
         }
 
         if (!mediaPath || mediaPath === '') {
-            missingMedia.push((child.name || 'Unknown Item') + ' | No media path available');
+            if (pcIsOfflineItem(child)) {
+                missingMedia.push((child.name || 'Unknown Item') + ' | Media is offline and no media path is available');
+            } else if (mediaPathError) {
+                missingMedia.push((child.name || 'Unknown Item') + ' | Could not read media path: ' + mediaPathError);
+            }
             continue;
         }
 

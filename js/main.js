@@ -45,6 +45,8 @@ const SEQUENCE_ONLY_MODE_STORAGE_KEY = 'projectcollector.sequenceOnlyMode';
 const CREATE_REDUCED_PROJECT_STORAGE_KEY = 'projectcollector.createReducedProject';
 const COPY_PROJECT_FILE_STORAGE_KEY = 'projectcollector.copyProjectFile';
 const LINK_PROJECT_AFTER_COLLECTION_STORAGE_KEY = 'projectcollector.linkProjectAfterCollection';
+const BACKUP_LINK_MAP_FILE_NAME = 'Project Collector Link Map.json';
+const BACKUP_LINK_MAP_SCHEMA_VERSION = 1;
 
 function setText(id, value) {
     document.getElementById(id).textContent = value;
@@ -2722,6 +2724,10 @@ function setBusyState(busy) {
         compareButton.disabled = busy;
     }
     document.getElementById('collectButton').disabled = busy;
+    const linkExistingBackupButton = document.getElementById('linkExistingBackupButton');
+    if (linkExistingBackupButton) {
+        linkExistingBackupButton.disabled = busy;
+    }
     const refreshButton = document.getElementById('refreshProjectButton');
     if (refreshButton) {
         refreshButton.disabled = busy;
@@ -3028,6 +3034,110 @@ async function chooseCompareFolder() {
     }
 }
 
+async function chooseAndLinkExistingBackup() {
+    if (isCopying) {
+        return;
+    }
+
+    const result = window.cep.fs.showOpenDialogEx(false, false, 'Select a BACKUP Premiere Project');
+    const selectedPaths = result && Array.isArray(result.data) ? result.data : [];
+
+    if (selectedPaths.length > 0) {
+        await linkExistingBackupProject(selectedPaths[0]);
+    }
+}
+
+async function linkExistingBackupProject(backupProjectPath) {
+    if (isCopying) {
+        return;
+    }
+
+    resetResults();
+    hideCompletionPrompt();
+    setBusyState(true);
+
+    try {
+        if (!backupProjectPath || path.extname(backupProjectPath).toLowerCase() !== '.prproj') {
+            throw new Error('Select a Premiere Pro .prproj BACKUP project.');
+        }
+
+        if (!fileExists(backupProjectPath)) {
+            throw new Error(`The selected BACKUP project does not exist: ${backupProjectPath}`);
+        }
+
+        setText('currentFile', 'Reading backup link map');
+        setText('summaryText', `Preparing to link ${path.basename(backupProjectPath)}...`);
+        const manifest = readBackupLinkManifest(backupProjectPath);
+        const relinkTasks = resolveBackupLinkManifestTasks(manifest, backupProjectPath);
+
+        const hostLoaded = await ensureHostScriptLoaded();
+        if (!hostLoaded) {
+            throw new Error('The Premiere host script could not be loaded.');
+        }
+
+        setText('currentFile', 'Saving the open original project');
+        const currentProjectRaw = await callHost('saveCurrentProjectAndGetPath()');
+        const currentProjectInfo = safeJsonParse(currentProjectRaw);
+        if (!currentProjectInfo || currentProjectInfo.error || !currentProjectInfo.projectPath) {
+            throw new Error(
+                currentProjectInfo && currentProjectInfo.error
+                    ? currentProjectInfo.error
+                    : 'Open the original Premiere project before linking the BACKUP project.'
+            );
+        }
+
+        const currentProjectPath = currentProjectInfo.projectPath;
+        if (path.resolve(currentProjectPath).toLowerCase() === path.resolve(backupProjectPath).toLowerCase()) {
+            throw new Error('The selected BACKUP project is already open. Open the original project first.');
+        }
+
+        const expectedOriginalName = String(
+            manifest.originalProjectFileName || path.basename(manifest.originalProjectPath || '')
+        );
+        if (!expectedOriginalName || path.basename(currentProjectPath).toLowerCase() !== expectedOriginalName.toLowerCase()) {
+            throw new Error(`Open the original project named "${expectedOriginalName || 'unknown'}" before linking this BACKUP project.`);
+        }
+
+        setText('currentFile', 'Linking the existing BACKUP project');
+        setText('summaryText', `Linking ${relinkTasks.length} media path${relinkTasks.length === 1 ? '' : 's'}...`);
+        const linkRaw = await callHost(
+            `linkProjectCopyToCollectedMedia("${escapeForEvalScript(backupProjectPath)}","${escapeForEvalScript(JSON.stringify(relinkTasks))}")`
+        );
+        const linkResult = safeJsonParse(linkRaw);
+
+        if (!linkResult || linkResult.success !== true || linkResult.error || (Array.isArray(linkResult.failed) && linkResult.failed.length)) {
+            const failureMessage = linkResult && linkResult.error
+                ? linkResult.error
+                : (linkResult && Array.isArray(linkResult.failed) && linkResult.failed.length
+                    ? linkResult.failed.join('; ')
+                    : `Could not link the BACKUP project. Raw response: ${linkRaw}`);
+            throw new Error(failureMessage);
+        }
+
+        const successMessage = `Existing BACKUP linked without errors. ${linkResult.linkedCollectedCount || 0} collected, ${linkResult.linkedSkipLocationCount || 0} skip-location, and ${linkResult.linkedOriginalCount || 0} original media path${(linkResult.linkedOriginalCount || 0) === 1 ? '' : 's'} linked. The BACKUP project remains open.`;
+        setText('currentFile', 'Existing BACKUP linking finished');
+        setText('summaryText', successMessage);
+        renderList('errorList', [], (item) => item, 'No errors.');
+        renderList('missingList', [], (item) => item, 'No skipped items.');
+        showCompletionPrompt(true, successMessage);
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error || 'Unknown link error');
+        setText('currentFile', 'Existing BACKUP linking stopped');
+        setText('summaryText', `Existing BACKUP could not be linked. ${message}`);
+        renderList(
+            'errorList',
+            [{ source: backupProjectPath || 'BACKUP project', destination: '', message }],
+            (item) => `${item.source} | ${item.message}`,
+            'No errors.'
+        );
+        renderList('missingList', [], (item) => item, 'No skipped items.');
+        showCompletionPrompt(false, `Existing BACKUP could not be linked. ${message}`);
+        console.error('Project Collector existing BACKUP relink failed', error);
+    } finally {
+        setBusyState(false);
+    }
+}
+
 function hasIgnoredTracks(filtersPayload) {
     return filtersPayload.some((filter) => (
         (Array.isArray(filter.ignoredVideoTracks) && filter.ignoredVideoTracks.length)
@@ -3273,6 +3383,163 @@ function buildLinkProjectTasks(allTasks, copiedTasks, compareMatches) {
     });
 
     return Array.from(relinkTasksBySource.values());
+}
+
+function getBackupLinkMapPath(backupProjectPath) {
+    return path.join(path.dirname(backupProjectPath || ''), BACKUP_LINK_MAP_FILE_NAME);
+}
+
+function isSupportedRelinkTargetKind(targetKind) {
+    return targetKind === 'collected'
+        || targetKind === 'skip-location'
+        || targetKind === 'original';
+}
+
+function isPathInsideRoot(rootPath, candidatePath) {
+    const resolvedRoot = path.resolve(rootPath);
+    const resolvedCandidate = path.resolve(candidatePath);
+    const relativePath = path.relative(resolvedRoot, resolvedCandidate);
+
+    return relativePath === ''
+        || (!relativePath.startsWith(`..${path.sep}`)
+            && relativePath !== '..'
+            && !path.isAbsolute(relativePath));
+}
+
+function createBackupLinkManifest(rootPath, copiedProjectPath, originalProjectPath, relinkTasks) {
+    if (!rootPath || !copiedProjectPath || !originalProjectPath) {
+        throw new Error('The backup project paths were not available for the link map.');
+    }
+
+    const portableTasks = (relinkTasks || []).map((task) => {
+        if (!task || !task.source || !task.destination || !isSupportedRelinkTargetKind(task.targetKind)) {
+            throw new Error('The backup relink plan contains an invalid media entry.');
+        }
+
+        if (task.targetKind !== 'collected') {
+            return {
+                source: task.source,
+                destination: task.destination,
+                targetKind: task.targetKind,
+                destinationIsRelative: false
+            };
+        }
+
+        if (!isPathInsideRoot(rootPath, task.destination)) {
+            throw new Error(`A collected media destination is outside the backup folder: ${task.destination}`);
+        }
+
+        const relativeDestination = path.relative(rootPath, task.destination);
+        if (!relativeDestination) {
+            throw new Error(`A collected media destination is invalid: ${task.destination}`);
+        }
+
+        return {
+            source: task.source,
+            destination: relativeDestination.replace(/\\/g, '/'),
+            targetKind: task.targetKind,
+            destinationIsRelative: true
+        };
+    });
+
+    return {
+        schemaVersion: BACKUP_LINK_MAP_SCHEMA_VERSION,
+        createdAt: new Date().toISOString(),
+        originalProjectPath,
+        originalProjectFileName: path.basename(originalProjectPath),
+        backupProjectFileName: path.basename(copiedProjectPath),
+        relinkTasks: portableTasks
+    };
+}
+
+function resolveBackupLinkManifestTasks(manifest, backupProjectPath) {
+    if (!manifest || manifest.schemaVersion !== BACKUP_LINK_MAP_SCHEMA_VERSION) {
+        throw new Error('This backup does not have a supported Project Collector link map.');
+    }
+
+    if (!backupProjectPath || !manifest.backupProjectFileName) {
+        throw new Error('The selected BACKUP project is not identified by the link map.');
+    }
+
+    if (path.basename(backupProjectPath).toLowerCase() !== String(manifest.backupProjectFileName).toLowerCase()) {
+        throw new Error(`Select the BACKUP project named "${manifest.backupProjectFileName}".`);
+    }
+
+    if (!Array.isArray(manifest.relinkTasks)) {
+        throw new Error('The Project Collector link map has no relink plan.');
+    }
+
+    const backupRootPath = path.dirname(backupProjectPath);
+    return manifest.relinkTasks.map((task) => {
+        if (!task || !task.source || !task.destination || !isSupportedRelinkTargetKind(task.targetKind)) {
+            throw new Error('The Project Collector link map contains an invalid media entry.');
+        }
+
+        if (task.targetKind === 'collected') {
+            if (task.destinationIsRelative !== true || path.isAbsolute(task.destination)) {
+                throw new Error('A collected media path in the link map is not portable.');
+            }
+
+            const destinationPath = path.resolve(backupRootPath, task.destination);
+            if (!isPathInsideRoot(backupRootPath, destinationPath)) {
+                throw new Error('A collected media path in the link map leaves the backup folder.');
+            }
+
+            return {
+                source: task.source,
+                destination: destinationPath,
+                targetKind: task.targetKind
+            };
+        }
+
+        if (task.destinationIsRelative === true) {
+            throw new Error('An original or skip-location media path cannot be relative.');
+        }
+
+        return {
+            source: task.source,
+            destination: task.destination,
+            targetKind: task.targetKind
+        };
+    });
+}
+
+function writeBackupLinkManifest(backupProjectPath, manifest) {
+    const linkMapPath = getBackupLinkMapPath(backupProjectPath);
+    const temporaryPath = `${linkMapPath}.tmp-${process.pid}-${Date.now()}`;
+
+    try {
+        fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+        if (fs.existsSync(linkMapPath)) {
+            fs.unlinkSync(linkMapPath);
+        }
+        fs.renameSync(temporaryPath, linkMapPath);
+    } catch (error) {
+        try {
+            if (fs.existsSync(temporaryPath)) {
+                fs.unlinkSync(temporaryPath);
+            }
+        } catch (cleanupError) {}
+        throw error;
+    }
+
+    return linkMapPath;
+}
+
+function readBackupLinkManifest(backupProjectPath) {
+    const linkMapPath = getBackupLinkMapPath(backupProjectPath);
+    if (!fs.existsSync(linkMapPath)) {
+        throw new Error(`No "${BACKUP_LINK_MAP_FILE_NAME}" was found beside the selected BACKUP project. Create a new backup with this version first.`);
+    }
+
+    let manifest = null;
+    try {
+        manifest = JSON.parse(fs.readFileSync(linkMapPath, 'utf8'));
+    } catch (error) {
+        throw new Error(`The Project Collector link map could not be read. ${error.message}`);
+    }
+
+    return manifest;
 }
 
 function createCopyRuleContext(options) {
@@ -3601,6 +3868,7 @@ async function runCollection() {
     let copiedProjectMessage = '';
     let linkedProjectMessage = '';
     let copiedProjectPath = '';
+    let projectRelinkTasks = [];
     if (copyProjectFile) {
         setText('currentFile', 'Saving and copying Premiere project file');
         const projectSaveRaw = await callHost('saveCurrentProjectAndGetPath()');
@@ -3610,7 +3878,28 @@ async function runCollection() {
             const projectCopyResult = await copyProjectFileIntoCollectedRoot(plan.rootPath, projectSaveInfo.projectPath, getCollectedProjectFileName(projectSaveInfo.projectPath));
             if (projectCopyResult.success) {
                 copiedProjectPath = projectCopyResult.destinationPath;
+                projectRelinkTasks = buildLinkProjectTasks(latestPlan.tasks || [], copiedMediaTasks, compareMatches);
                 copiedProjectMessage = ` Project file copied as ${path.basename(copiedProjectPath)}.`;
+                try {
+                    const linkManifest = createBackupLinkManifest(
+                        plan.rootPath,
+                        copiedProjectPath,
+                        projectSaveInfo.projectPath,
+                        projectRelinkTasks
+                    );
+                    writeBackupLinkManifest(copiedProjectPath, linkManifest);
+                    copiedProjectMessage += ' Link map saved for later linking.';
+                } catch (error) {
+                    const linkMapFailureMessage = error && error.message
+                        ? error.message
+                        : 'Unknown link-map error';
+                    copiedProjectMessage += ` Link map could not be saved: ${linkMapFailureMessage}.`;
+                    failures.push({
+                        source: copiedProjectPath,
+                        destination: getBackupLinkMapPath(copiedProjectPath),
+                        message: linkMapFailureMessage
+                    });
+                }
             } else {
                 copiedProjectMessage = ` Project file copy failed: ${projectCopyResult.message || 'Unknown error'}.`;
                 failures.push({
@@ -3631,7 +3920,6 @@ async function runCollection() {
         if (linkProjectAfterCollection) {
             if (copiedProjectPath) {
                 setText('currentFile', 'Linking copied project to collected media');
-                const projectRelinkTasks = buildLinkProjectTasks(latestPlan.tasks || [], copiedMediaTasks, compareMatches);
                 const linkRaw = await callHost(
                     `linkProjectCopyToCollectedMedia("${escapeForEvalScript(copiedProjectPath)}","${escapeForEvalScript(JSON.stringify(projectRelinkTasks))}")`
                 );

@@ -366,6 +366,21 @@ button:disabled {
     margin-bottom: 14px;
 }
 
+.backup-action-row {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.backup-action-row button {
+    flex: 1 1 220px;
+}
+
+.backup-link-note {
+    margin-top: 8px;
+}
+
 .option-row {
     display: flex;
     gap: 10px;
@@ -1144,9 +1159,11 @@ button:disabled {
                     </label>
                 </div>
 
-                <div>
+                <div class="backup-action-row">
                     <button id="collectButton" class="button-primary" onclick="collect()">BACKUP PROJECT</button>
+                    <button id="linkExistingBackupButton" class="button-secondary" onclick="chooseAndLinkExistingBackup()">LINK AN EXISTING BACKUP</button>
                 </div>
+                <div class="small-note backup-link-note">For later linking: open the original project, then select its copied BACKUP project. No files are copied again.</div>
 
                 <div>
                     <h2 class="card-title">Progress</h2>

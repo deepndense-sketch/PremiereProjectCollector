@@ -62,6 +62,7 @@ function createTestDocument() {
         'currentFile',
         'errorList',
         'missingList',
+        'linkExistingBackupButton',
         'progressFill',
         'progressText',
         'refreshProjectButton',
@@ -165,6 +166,8 @@ test('panel uses the compact destination labels and places sequence options with
     assert.ok(html.indexOf('id="sequenceOnlyMode"') < html.indexOf('id="copyProjectFile"'));
     assert.ok(html.indexOf('id="createReducedProject"') < html.indexOf('id="copyProjectFile"'));
     assert.ok(html.indexOf('id="linkProjectAfterCollection"') < html.indexOf('id="collectButton"'));
+    assert.match(html, /id="linkExistingBackupButton"[^>]*>LINK AN EXISTING BACKUP</);
+    assert.match(html, /No files are copied again/);
 });
 
 test('completion dialog clearly switches between green success and red error states', () => {
@@ -1774,6 +1777,136 @@ test('project copy physically creates the requested BACKUP filename even beside 
     );
 });
 
+test('backup link map keeps copied media portable when the whole backup folder moves', (t) => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'project-collector-portable-link-map-'));
+    const originalBackupRoot = path.join(tempRoot, 'original-location', 'Show_Project');
+    const movedBackupRoot = path.join(tempRoot, 'moved-location', 'Show_Project');
+    const originalProjectPath = path.join(tempRoot, 'source', 'Show Project.prproj');
+    const originalBackupProjectPath = path.join(originalBackupRoot, 'Show Project BACKUP.prproj');
+    const originalCollectedPath = path.join(originalBackupRoot, 'CollectedMedias', 'clip.mov');
+    const untouchedOriginalMediaPath = path.join(tempRoot, 'source', 'untouched.mov');
+    const skipLocationPath = path.join(tempRoot, 'skip-location', 'verified.mov');
+    fs.mkdirSync(path.dirname(originalCollectedPath), { recursive: true });
+    fs.mkdirSync(path.dirname(originalProjectPath), { recursive: true });
+    fs.writeFileSync(originalBackupProjectPath, 'backup-project');
+    fs.writeFileSync(originalCollectedPath, 'copied-media');
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const context = loadCollectorLogic();
+    const manifest = context.createBackupLinkManifest(
+        originalBackupRoot,
+        originalBackupProjectPath,
+        originalProjectPath,
+        [
+            {
+                source: path.join(tempRoot, 'source', 'clip.mov'),
+                destination: originalCollectedPath,
+                targetKind: 'collected'
+            },
+            {
+                source: untouchedOriginalMediaPath,
+                destination: untouchedOriginalMediaPath,
+                targetKind: 'original'
+            },
+            {
+                source: path.join(tempRoot, 'source', 'verified.mov'),
+                destination: skipLocationPath,
+                targetKind: 'skip-location'
+            }
+        ]
+    );
+    context.writeBackupLinkManifest(originalBackupProjectPath, manifest);
+
+    fs.mkdirSync(path.dirname(movedBackupRoot), { recursive: true });
+    fs.renameSync(originalBackupRoot, movedBackupRoot);
+    const movedBackupProjectPath = path.join(movedBackupRoot, 'Show Project BACKUP.prproj');
+    const savedManifest = context.readBackupLinkManifest(movedBackupProjectPath);
+    const resolvedTasks = JSON.parse(JSON.stringify(
+        context.resolveBackupLinkManifestTasks(savedManifest, movedBackupProjectPath)
+    ));
+
+    assert.equal(
+        savedManifest.relinkTasks[0].destination,
+        'CollectedMedias/clip.mov'
+    );
+    assert.deepEqual(resolvedTasks, [
+        {
+            source: path.join(tempRoot, 'source', 'clip.mov'),
+            destination: path.join(movedBackupRoot, 'CollectedMedias', 'clip.mov'),
+            targetKind: 'collected'
+        },
+        {
+            source: untouchedOriginalMediaPath,
+            destination: untouchedOriginalMediaPath,
+            targetKind: 'original'
+        },
+        {
+            source: path.join(tempRoot, 'source', 'verified.mov'),
+            destination: skipLocationPath,
+            targetKind: 'skip-location'
+        }
+    ]);
+});
+
+test('standalone existing-backup action links without copying media again', async (t) => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'project-collector-later-link-'));
+    const backupRoot = path.join(tempRoot, 'Show_Project');
+    const originalProjectPath = path.join(tempRoot, 'source', 'Show Project.prproj');
+    const backupProjectPath = path.join(backupRoot, 'Show Project BACKUP.prproj');
+    const copiedMediaPath = path.join(backupRoot, 'CollectedMedias', 'clip.mov');
+    fs.mkdirSync(path.dirname(copiedMediaPath), { recursive: true });
+    fs.mkdirSync(path.dirname(originalProjectPath), { recursive: true });
+    fs.writeFileSync(backupProjectPath, 'backup-project');
+    fs.writeFileSync(copiedMediaPath, 'copied-media');
+    t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const testDocument = createTestDocument();
+    const context = loadCollectorLogic(testDocument);
+    const manifest = context.createBackupLinkManifest(
+        backupRoot,
+        backupProjectPath,
+        originalProjectPath,
+        [{
+            source: path.join(tempRoot, 'source', 'clip.mov'),
+            destination: copiedMediaPath,
+            targetKind: 'collected'
+        }]
+    );
+    context.writeBackupLinkManifest(backupProjectPath, manifest);
+    context.ensureHostScriptLoaded = async () => true;
+
+    let receivedRelinkTasks = null;
+    context.callHost = async (script) => {
+        if (script === 'saveCurrentProjectAndGetPath()') {
+            return JSON.stringify({ projectPath: originalProjectPath });
+        }
+        if (script.startsWith('linkProjectCopyToCollectedMedia(')) {
+            const match = script.match(/^linkProjectCopyToCollectedMedia\("(?:\\.|[^"])+"\,\"((?:\\.|[^"])*)"\)$/);
+            assert.ok(match, `Unexpected relink host call: ${script}`);
+            receivedRelinkTasks = JSON.parse(JSON.parse(`"${match[1]}"`));
+            return JSON.stringify({
+                success: true,
+                linkedCollectedCount: 1,
+                linkedSkipLocationCount: 0,
+                linkedOriginalCount: 0,
+                failed: []
+            });
+        }
+        throw new Error(`Unexpected host call: ${script}`);
+    };
+
+    await context.linkExistingBackupProject(backupProjectPath);
+
+    assert.deepEqual(receivedRelinkTasks, [{
+        source: path.join(tempRoot, 'source', 'clip.mov'),
+        destination: copiedMediaPath,
+        targetKind: 'collected'
+    }]);
+    assert.equal(testDocument.getElementById('completionPrompt').classList.contains('is-success'), true);
+    assert.equal(testDocument.getElementById('completionTitle').textContent, 'Done without error');
+    assert.match(testDocument.getElementById('summaryText').textContent, /Existing BACKUP linked without errors/);
+});
+
 test('collection sends the complete copied-versus-ignored relink plan to Premiere', async (t) => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'project-collector-relink-plan-'));
     const sourceDir = path.join(tempRoot, 'source');
@@ -1895,6 +2028,33 @@ test('collection sends the complete copied-versus-ignored relink plan to Premier
         {
             source: skipSourcePath,
             destination: skipMatchPath,
+            targetKind: 'skip-location'
+        }
+    ]);
+
+    const savedLinkMap = JSON.parse(fs.readFileSync(
+        path.join(destinationDir, 'Relink_Project', 'Project Collector Link Map.json'),
+        'utf8'
+    ));
+    assert.equal(savedLinkMap.backupProjectFileName, 'Relink Project BACKUP.prproj');
+    assert.deepEqual(savedLinkMap.relinkTasks.map((task) => ({
+        destination: task.destination,
+        destinationIsRelative: task.destinationIsRelative,
+        targetKind: task.targetKind
+    })), [
+        {
+            destination: 'CollectedMedias/copied.mov',
+            destinationIsRelative: true,
+            targetKind: 'collected'
+        },
+        {
+            destination: ignoredSourcePath,
+            destinationIsRelative: false,
+            targetKind: 'original'
+        },
+        {
+            destination: skipMatchPath,
+            destinationIsRelative: false,
             targetKind: 'skip-location'
         }
     ]);

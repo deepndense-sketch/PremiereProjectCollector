@@ -164,6 +164,135 @@ test('panel uses the compact destination labels and places sequence options with
     assert.ok(html.indexOf('id="linkProjectAfterCollection"') < html.indexOf('id="collectButton"'));
 });
 
+test('destination folders are created automatically without newer recursive-mkdir options', () => {
+    const context = loadCollectorLogic();
+    const rootPath = 'Z:\\';
+    const targetPath = 'Z:\\2017_SMTV2 PROJECT FOLDER\\@ SHOWS\\PE\\PE 3219 test\\PE 3219';
+    const createdDirectories = new Set([rootPath.toLowerCase()]);
+    const mkdirCalls = [];
+    const directoryFs = {
+        existsSync(candidatePath) {
+            return createdDirectories.has(String(candidatePath).toLowerCase());
+        },
+        statSync(candidatePath) {
+            if (!this.existsSync(candidatePath)) {
+                throw new Error(`Missing test directory: ${candidatePath}`);
+            }
+            return {
+                isDirectory() {
+                    return true;
+                }
+            };
+        },
+        mkdirSync(candidatePath) {
+            assert.equal(arguments.length, 1);
+            const parentPath = path.win32.dirname(candidatePath);
+            assert.equal(createdDirectories.has(parentPath.toLowerCase()), true);
+            createdDirectories.add(String(candidatePath).toLowerCase());
+            mkdirCalls.push(candidatePath);
+        }
+    };
+    context.testDirectoryFs = directoryFs;
+
+    vm.runInContext(
+        `ensureDirectorySync(${JSON.stringify(targetPath)}, testDirectoryFs)`,
+        context
+    );
+
+    assert.equal(createdDirectories.has(targetPath.toLowerCase()), true);
+    assert.equal(mkdirCalls.length, 5);
+
+    vm.runInContext(
+        `ensureDirectorySync(${JSON.stringify(targetPath)}, testDirectoryFs)`,
+        context
+    );
+    assert.equal(mkdirCalls.length, 5);
+});
+
+test('destination creation falls back to the native CEP folder API on mapped drives', () => {
+    const context = loadCollectorLogic();
+    const rootPath = 'Z:\\';
+    const targetPath = 'Z:\\Shows\\PE 3219 test\\PE 3219';
+    const createdDirectories = new Set([rootPath.toLowerCase()]);
+    const cepCalls = [];
+    const directoryFs = {
+        existsSync(candidatePath) {
+            return createdDirectories.has(String(candidatePath).toLowerCase());
+        },
+        statSync(candidatePath) {
+            if (!this.existsSync(candidatePath)) {
+                throw new Error(`Missing test directory: ${candidatePath}`);
+            }
+            return {
+                isDirectory() {
+                    return true;
+                }
+            };
+        },
+        mkdirSync(candidatePath) {
+            const error = new Error(`operation not permitted, mkdir '${candidatePath}'`);
+            error.code = 'EPERM';
+            throw error;
+        }
+    };
+    const cepFileSystem = {
+        makedir(candidatePath) {
+            const parentPath = path.win32.dirname(candidatePath);
+            if (!createdDirectories.has(parentPath.toLowerCase())) {
+                return { err: 3 };
+            }
+            createdDirectories.add(String(candidatePath).toLowerCase());
+            cepCalls.push(candidatePath);
+            return { err: 0 };
+        }
+    };
+    context.testDirectoryFs = directoryFs;
+    context.testCepFileSystem = cepFileSystem;
+
+    vm.runInContext(
+        `ensureDirectorySync(${JSON.stringify(targetPath)}, testDirectoryFs, testCepFileSystem)`,
+        context
+    );
+
+    assert.equal(createdDirectories.has(targetPath.toLowerCase()), true);
+    assert.equal(cepCalls.length, 3);
+});
+
+test('destination creation still surfaces genuine network permission failures', () => {
+    const context = loadCollectorLogic();
+    const rootPath = 'Z:\\';
+    const blockedPath = 'Z:\\Restricted';
+    const directoryFs = {
+        existsSync(candidatePath) {
+            return String(candidatePath).toLowerCase() === rootPath.toLowerCase();
+        },
+        statSync(candidatePath) {
+            if (!this.existsSync(candidatePath)) {
+                throw new Error(`Missing test directory: ${candidatePath}`);
+            }
+            return {
+                isDirectory() {
+                    return true;
+                }
+            };
+        },
+        mkdirSync(candidatePath) {
+            const error = new Error(`operation not permitted, mkdir '${candidatePath}'`);
+            error.code = 'EPERM';
+            throw error;
+        }
+    };
+    context.testDirectoryFs = directoryFs;
+
+    assert.throws(
+        () => vm.runInContext(
+            `ensureDirectorySync(${JSON.stringify(blockedPath)}, testDirectoryFs)`,
+            context
+        ),
+        (error) => error && error.code === 'EPERM'
+    );
+});
+
 test('unresolved included-and-ignored conflict never copies', () => {
     const context = loadCollectorLogic();
     const reason = vm.runInContext(`(() => {

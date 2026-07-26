@@ -547,8 +547,67 @@ function safeJsonParse(raw) {
     }
 }
 
-function ensureDirectorySync(dirPath) {
-    fs.mkdirSync(dirPath, { recursive: true });
+function ensureDirectorySync(dirPath, fileSystem, cepFileSystem) {
+    const directoryFs = fileSystem || fs;
+    const targetPath = String(dirPath || '');
+    let nativeCepFs = cepFileSystem || null;
+
+    if (!targetPath) {
+        throw new Error('Destination folder path is empty.');
+    }
+
+    if (!nativeCepFs) {
+        try {
+            nativeCepFs = window && window.cep && window.cep.fs ? window.cep.fs : null;
+        } catch (error) {
+            nativeCepFs = null;
+        }
+    }
+
+    function directoryExists(candidatePath) {
+        if (!directoryFs.existsSync(candidatePath)) {
+            return false;
+        }
+
+        const stat = directoryFs.statSync(candidatePath);
+        if (!stat || !stat.isDirectory()) {
+            const error = new Error(`Destination path exists but is not a folder: ${candidatePath}`);
+            error.code = 'ENOTDIR';
+            throw error;
+        }
+
+        return true;
+    }
+
+    if (directoryExists(targetPath)) {
+        return;
+    }
+
+    const parentPath = path.dirname(targetPath);
+    if (parentPath && parentPath !== targetPath) {
+        ensureDirectorySync(parentPath, directoryFs, nativeCepFs);
+    }
+
+    try {
+        directoryFs.mkdirSync(targetPath);
+    } catch (error) {
+        try {
+            if (nativeCepFs && typeof nativeCepFs.makedir === 'function') {
+                const cepResult = nativeCepFs.makedir(targetPath);
+                if (cepResult && (cepResult.err === 0 || cepResult.err === '0') && directoryExists(targetPath)) {
+                    return;
+                }
+            }
+        } catch (cepError) {}
+
+        if (!directoryExists(targetPath)) {
+            throw error;
+        }
+    }
+
+    if (!directoryExists(targetPath)) {
+        throw new Error(`Destination folder could not be created: ${targetPath}`);
+    }
 }
 
 function formatBytes(size) {
